@@ -1,0 +1,30 @@
+name: Noticias financieras
+
+on:
+  schedule:
+    # GitHub usa hora UTC. Venezuela = UTC-4.
+    - cron: "0 14 * * *"   # 10:00 VET (matutino)
+    - cron: "0 20 * * *"   # 16:00 VET (vespertino)
+  workflow_dispatch:        # permite ejecutarlo manualmente desde la pestana Actions
+
+jobs:
+  enviar-noticias:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clonar repositorio
+        uses: actions/checkout@v4
+
+      - name: Instalar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+
+      - name: Enviar resumen a Telegram
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python bot.py

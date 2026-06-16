@@ -1,0 +1,48 @@
+name: Alertas de alto impacto
+
+on:
+  schedule:
+    - cron: "0 * * * *"   # cada hora, en punto (UTC)
+  workflow_dispatch:        # permite ejecutarlo manualmente desde la pestana Actions
+
+permissions:
+  contents: write           # necesario para guardar breaking_state.json en el repo
+
+# Evita que dos corridas se pisen al escribir el archivo de estado.
+concurrency:
+  group: breaking-alerts
+  cancel-in-progress: false
+
+jobs:
+  alerta:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clonar repositorio
+        uses: actions/checkout@v4
+
+      - name: Instalar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+
+      - name: Revisar noticias de alto impacto
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python breaking.py
+
+      - name: Guardar estado (evitar alertas repetidas)
+        run: |
+          if [ -n "$(git status --porcelain breaking_state.json)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add breaking_state.json
+            git commit -m "Actualizar estado de alertas [skip ci]"
+            git push
+          else
+            echo "Sin cambios en el estado; nada que guardar."
+          fi
