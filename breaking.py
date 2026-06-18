@@ -65,17 +65,27 @@ def classify_high_impact(candidates):
         for i, c in enumerate(candidates)
     )
     prompt = (
-        "Eres un analista financiero. De la siguiente lista de titulares, "
-        "identifica SOLO los de ALTO IMPACTO economico/financiero: eventos "
-        "realmente grandes como crash o desplome de mercados, default de deuda, "
-        "sanciones economicas relevantes, devaluacion o cambios cambiarios "
-        "fuertes, decisiones de politica monetaria de gran calado, quiebras "
-        "sistemicas o medidas economicas de gobierno de gran alcance. "
-        "Ignora noticias rutinarias, de opinion o de impacto menor. "
-        "Se MUY exigente: si dudas, NO lo incluyas.\n\n"
+        "Eres un editor financiero MUY exigente. De la lista de titulares, marca "
+        "SOLO los que merecen interrumpir el dia de alguien con una alerta urgente. "
+        "El umbral es altisimo: la mayoria de los dias la respuesta correcta es que "
+        "NO hay ninguno.\n\n"
+        "SI alerta (eventos grandes y consumados, no rumores ni expectativas):\n"
+        "- Crash o desplome fuerte de un mercado importante (caida brusca de varios %).\n"
+        "- Default o reestructuracion de deuda soberana o de una gran empresa.\n"
+        "- Sanciones economicas importantes nuevas (o su levantamiento).\n"
+        "- Devaluacion o salto cambiario fuerte (sobre todo del bolivar venezolano).\n"
+        "- Decision YA TOMADA de cambio de tasas de un banco central importante (Fed, BCE).\n"
+        "- Quiebra de una institucion sistemica o un shock geopolitico que mueva mercados.\n\n"
+        "NO alerta (esto es ruido, IGNORALO):\n"
+        "- Reportes rutinarios de precios ('petroleo hoy', 'el dolar cotiza a...').\n"
+        "- Datos economicos menores, informes, encuestas, previsiones o expectativas.\n"
+        "- Articulos de opinion, analisis, 'lo que significa para ti', consejos.\n"
+        "- Movimientos pequenos o normales de mercado; anticipos de algo que aun no pasa.\n\n"
+        "Regla de oro: ante la MINIMA duda, NO lo incluyas. Es mejor no alertar de "
+        "algo mediano que alertar de mas.\n\n"
         "Responde SOLO un JSON con esta forma: "
         '{"alertas": [{"indice": <numero>, "motivo": "<frase corta en español>"}]}. '
-        'Si no hay ninguna de alto impacto, responde {"alertas": []}.\n\n'
+        'Si no hay ninguna verdaderamente grande, responde {"alertas": []}.\n\n'
         f"TITULARES:\n{listado}"
     )
     resp = client.models.generate_content(
