@@ -3,8 +3,9 @@ name: Noticias financieras
 on:
   schedule:
     # GitHub usa hora UTC. Venezuela = UTC-4.
-    - cron: "0 14 * * *"   # 10:00 VET (matutino)
-    - cron: "0 20 * * *"   # 16:00 VET (vespertino)
+    # Se evita el minuto :00 (muy congestionado) para reducir retrasos/saltos.
+    - cron: "13 14 * * *"   # ~10:13 VET (matutino)
+    - cron: "13 20 * * *"   # ~16:13 VET (vespertino)
   workflow_dispatch:        # permite ejecutarlo manualmente desde la pestana Actions
 
 jobs:

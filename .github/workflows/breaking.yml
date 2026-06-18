@@ -2,7 +2,7 @@ name: Alertas de alto impacto
 
 on:
   schedule:
-    - cron: "0 * * * *"   # cada hora, en punto (UTC)
+    - cron: "17 * * * *"   # cada hora, en el minuto 17 (evita el :00 congestionado)
   workflow_dispatch:        # permite ejecutarlo manualmente desde la pestana Actions
 
 permissions:
