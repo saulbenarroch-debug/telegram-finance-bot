@@ -153,9 +153,34 @@ def format_news_for_prompt(by_category):
     return "\n\n".join(blocks)
 
 
+def gemini_generate(prompt, config=None, max_retries=4):
+    """Llama a Gemini reintentando ante errores temporales (503/429/500).
+
+    Google a veces devuelve 503 ('high demand') de forma pasajera. En vez de
+    caernos al primer intento, reintentamos con espera creciente.
+    """
+    client = genai.Client(api_key=GEMINI_API_KEY)
+    delay = 5
+    for attempt in range(1, max_retries + 1):
+        try:
+            return client.models.generate_content(
+                model=GEMINI_MODEL, contents=prompt, config=config
+            )
+        except Exception as exc:  # noqa: BLE001
+            msg = str(exc)
+            transient = any(
+                s in msg for s in ("503", "429", "500", "UNAVAILABLE", "overloaded", "timeout")
+            )
+            if attempt < max_retries and transient:
+                print(f"[warn] Gemini intento {attempt}/{max_retries} fallo; reintento en {delay}s")
+                time.sleep(delay)
+                delay *= 2
+                continue
+            raise
+
+
 def write_briefing(by_category, turno, fecha):
     """Le pide a Gemini que redacte el resumen en español e ingles."""
-    client = genai.Client(api_key=GEMINI_API_KEY)
     noticias = format_news_for_prompt(by_category)
 
     prompt = (
@@ -176,10 +201,7 @@ def write_briefing(by_category, turno, fecha):
         f"NOTICIAS:\n{noticias}"
     )
 
-    resp = client.models.generate_content(
-        model=GEMINI_MODEL,
-        contents=prompt,
-    )
+    resp = gemini_generate(prompt)
     return resp.text.strip()
 
 
@@ -206,7 +228,11 @@ def build_message(now_vet):
     if total == 0:
         return f"{header}\n\nSin novedades relevantes en esta franja horaria."
 
-    briefing = write_briefing(by_category, turno, fecha)
+    try:
+        briefing = write_briefing(by_category, turno, fecha)
+    except Exception as exc:  # noqa: BLE001 - si la IA falla, igual mandamos los titulares
+        print(f"[warn] no se pudo generar el resumen IA: {exc}")
+        briefing = "<i>(El resumen con IA no esta disponible ahora. Te dejo los titulares.)</i>"
     sources = build_sources_block(by_category)
     return f"{header}\n\n{briefing}\n\n{sources}"
 

@@ -13,8 +13,6 @@ import os
 import sys
 from datetime import datetime, timedelta, timezone
 
-from google import genai
-
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import bot
 
@@ -59,7 +57,6 @@ def gather_candidates(cutoff_utc, already):
 
 def classify_high_impact(candidates):
     """Pide a Gemini que devuelva SOLO los titulares de alto impacto."""
-    client = genai.Client(api_key=bot.GEMINI_API_KEY)
     listado = "\n".join(
         f"{i}. [{c['category']}] {c['headline']} — {c['summary']}"
         for i, c in enumerate(candidates)
@@ -88,11 +85,7 @@ def classify_high_impact(candidates):
         'Si no hay ninguna verdaderamente grande, responde {"alertas": []}.\n\n'
         f"TITULARES:\n{listado}"
     )
-    resp = client.models.generate_content(
-        model=bot.GEMINI_MODEL,
-        contents=prompt,
-        config={"response_mime_type": "application/json"},
-    )
+    resp = bot.gemini_generate(prompt, config={"response_mime_type": "application/json"})
     try:
         return json.loads(resp.text).get("alertas", [])
     except json.JSONDecodeError:
@@ -113,7 +106,11 @@ def main():
         print("[ok] sin noticias nuevas que evaluar")
         return
 
-    alertas = classify_high_impact(candidates)
+    try:
+        alertas = classify_high_impact(candidates)
+    except Exception as exc:  # noqa: BLE001 - si Gemini esta caido, omitir sin fallar
+        print(f"[warn] Gemini no disponible ({exc}); se omite esta corrida")
+        return
     if not alertas:
         print("[ok] nada de alto impacto en esta corrida")
         return
