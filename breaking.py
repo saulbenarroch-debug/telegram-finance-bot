@@ -26,6 +26,34 @@ LOOKBACK_MINUTES = 70
 # Cuantos enlaces recordar como maximo (para que el archivo no crezca infinito).
 MAX_REMEMBERED = 500
 
+# Filtro barato previo: solo llamamos a la IA (que consume cuota) si algun titular
+# contiene una senal fuerte de alto impacto. Asi la mayoria de las horas tranquilas
+# NO gastan cuota de Gemini. Debe ser en minusculas.
+HIGH_IMPACT_KEYWORDS = [
+    # español
+    "desplome", "desploma", "se hunde", "se hunden", "colapso", "colapsa", "crac",
+    "quiebra", "bancarrota", "insolvencia", "default", "cesación de pagos", "impago",
+    "sanciones", "sancion", "embargo", "devaluación", "devalúa", "maxidevaluación",
+    "hiperinflación", "recesión", "rescate", "expropia", "expropiación", "nacionaliza",
+    "sube las tasas", "baja las tasas", "recorta las tasas", "sube tasas", "recorta tasas",
+    "congela", "corralito", "moratoria", "rebaja de calificación",
+    # ingles
+    "crash", "plunge", "plummet", "collapse", "sinks", "tumbles", "bankruptcy",
+    "insolvency", "sanctions", "embargo", "devaluation", "hyperinflation", "recession",
+    "bailout", "rate hike", "rate cut", "raises rates", "cuts rates", "nationalizes",
+    "expropriat", "downgrade", "default",
+    # M&A grande
+    "miles de millones", "mil millones", "billion", "mega fusión", "megafusión",
+]
+
+
+def has_high_impact_signal(candidates):
+    """True si algun titular/resumen contiene una palabra clave de alto impacto."""
+    blob = " ".join(
+        (c["headline"] + " " + (c["summary"] or "")).lower() for c in candidates
+    )
+    return any(kw in blob for kw in HIGH_IMPACT_KEYWORDS)
+
 
 def load_state():
     try:
@@ -73,7 +101,7 @@ def classify_high_impact(candidates):
         "- Devaluacion o salto cambiario fuerte (sobre todo del bolivar venezolano).\n"
         "- Decision YA TOMADA de cambio de tasas de un banco central importante (Fed, BCE).\n"
         "- Quiebra de una institucion sistemica o un shock geopolitico que mueva mercados.\n"
-        "- Operacion de M&A (fusion/adquisicion) MUY grande en Latinoamerica (miles de millones o "
+        "- Operacion de M&A (fusion/adquisicion) MUY grande en Suramerica (miles de millones o "
         "que redefina un sector).\n\n"
         "NO alerta (esto es ruido, IGNORALO):\n"
         "- Reportes rutinarios de precios ('petroleo hoy', 'el dolar cotiza a...').\n"
@@ -106,6 +134,12 @@ def main():
     candidates = gather_candidates(cutoff_utc, already)
     if not candidates:
         print("[ok] sin noticias nuevas que evaluar")
+        return
+
+    # Filtro barato: si no hay ninguna senal fuerte, ni siquiera llamamos a la IA
+    # (asi no gastamos cuota de Gemini en horas tranquilas).
+    if not has_high_impact_signal(candidates):
+        print("[ok] sin senales de alto impacto; no se consulta a la IA")
         return
 
     try:

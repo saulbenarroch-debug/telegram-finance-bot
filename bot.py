@@ -28,7 +28,7 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 VET = timezone(timedelta(hours=-4))
 
 # Maximo de titulares por categoria que se le pasan a la IA.
-MAX_PER_CATEGORY = 8
+MAX_PER_CATEGORY = 6
 
 # Modelo de Gemini. "flash" es rapido y entra en la capa gratuita.
 GEMINI_MODEL = "gemini-2.5-flash"
@@ -52,35 +52,49 @@ def google_news_rss(query, hl="es-419", gl="US", ceid="US:es-419"):
     )
 
 
-# Consultas para el feed de M&A en Latinoamerica (una en español, una en ingles).
+# --- Consultas de Google News (nichos sin RSS propio) ---
+# Economia e inversion en Suramerica (excluye ruido deportivo).
+_SURAMERICA_QUERY = (
+    '(economía OR PIB OR inversión OR "banco central" OR fiscal OR déficit OR '
+    "crecimiento OR reforma OR dólar OR bonos OR exportaciones) "
+    '("América del Sur" OR Suramérica OR Brasil OR Argentina OR Chile OR Colombia '
+    "OR Perú OR Uruguay OR Bolivia OR Paraguay OR Ecuador) "
+    "-fútbol -deportes -selección -partido"
+)
+# Recursos y commodities del sur (litio, cobre, petroleo, gas, mineria).
+_RECURSOS_QUERY = (
+    "(litio OR cobre OR petróleo OR gas OR minería OR mineral) "
+    "(Chile OR Perú OR Argentina OR Bolivia OR Brasil OR Colombia OR Guyana) "
+    "(proyecto OR inversión OR producción OR exportación OR yacimiento OR precio)"
+)
+# M&A enfocado en Suramerica (una consulta en español y otra en ingles).
 _MA_QUERY_ES = (
     '("fusiones y adquisiciones" OR "adquiere" OR "adquirió" OR "compra la" OR '
     '"OPA" OR "toma el control de" OR "fusión con") (empresa OR compañía OR grupo '
-    "OR banco OR petrolera OR Latinoamérica OR Sudamérica OR Brasil OR México OR "
-    "Colombia OR Chile OR Argentina OR Perú)"
+    "OR banco OR petrolera OR Suramérica OR Brasil OR Argentina OR Chile OR "
+    "Colombia OR Perú OR Uruguay OR Bolivia OR Ecuador)"
 )
 _MA_QUERY_EN = (
-    '(M&A OR merger OR acquisition OR acquires) ("Latin America" OR "South America" '
-    "OR Brazil OR Mexico OR Colombia OR Chile OR Argentina OR Peru)"
+    '(M&A OR merger OR acquisition OR acquires) ("South America" OR Brazil OR '
+    "Argentina OR Chile OR Colombia OR Peru OR Uruguay OR Bolivia OR Guyana)"
 )
 
-# Fuentes agrupadas por categoria. Cada categoria tiene un titulo (con emoji)
-# y una lista de feeds RSS verificados.
+# Fuentes agrupadas por categoria (orden = prominencia). El centro es Suramerica;
+# lo global/Wall Street queda al final como contexto.
 SOURCES = {
-    "wall_street": {
-        "title": "\U0001F1FA\U0001F1F8 Wall Street / Mercados USA",
-        "feeds": [
-            "https://www.cnbc.com/id/100003114/device/rss/rss.html",
-            "https://www.cnbc.com/id/20910258/device/rss/rss.html",
-            "http://feeds.marketwatch.com/marketwatch/topstories/",
-            "https://finance.yahoo.com/news/rssindex",
-        ],
+    "suramerica": {
+        "title": "\U0001F30E Suramerica: economia e inversion",
+        "feeds": [google_news_rss(_SURAMERICA_QUERY)],
     },
-    "global": {
-        "title": "\U0001F30D Economia global",
+    "recursos": {
+        "title": "⛏️ Recursos del sur (litio, cobre, petroleo)",
+        "feeds": [google_news_rss(_RECURSOS_QUERY)],
+    },
+    "suramerica_ma": {
+        "title": "\U0001F91D M&A en Suramerica",
         "feeds": [
-            "http://feeds.bbci.co.uk/news/business/rss.xml",
-            "https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/section/economia/portada",
+            google_news_rss(_MA_QUERY_ES),
+            google_news_rss(_MA_QUERY_EN, hl="en-US", gl="US", ceid="US:en"),
         ],
     },
     "venezuela": {
@@ -90,11 +104,14 @@ SOURCES = {
             "https://www.descifrado.com/category/economia/feed/",
         ],
     },
-    "latam_ma": {
-        "title": "\U0001F91D M&A en Latinoamerica",
+    "global": {
+        "title": "\U0001F30D Global y Wall Street (contexto)",
         "feeds": [
-            google_news_rss(_MA_QUERY_ES),
-            google_news_rss(_MA_QUERY_EN, hl="en-US", gl="US", ceid="US:en"),
+            "https://www.cnbc.com/id/100003114/device/rss/rss.html",
+            "https://www.cnbc.com/id/20910258/device/rss/rss.html",
+            "http://feeds.marketwatch.com/marketwatch/topstories/",
+            "http://feeds.bbci.co.uk/news/business/rss.xml",
+            "https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/section/economia/portada",
         ],
     },
 }
@@ -217,23 +234,27 @@ def write_briefing(by_category, turno, fecha):
     noticias = format_news_for_prompt(by_category)
 
     prompt = (
-        "Eres un analista financiero que escribe para Sureconomics, un servicio "
-        "que promueve la inversión en el sur, especialmente en Suramérica. Con "
+        "Eres un analista económico que escribe para Sureconomics, un servicio "
+        "centrado en Suramérica y en promover la inversión en la región. Con "
         f"estos titulares (resumen {turno.lower()} del {fecha}, hora Venezuela), "
-        "redacta un briefing breve y claro para un lector general.\n\n"
+        "redacta un briefing sobrio, claro y con criterio.\n\n"
         "Instrucciones:\n"
         "- Escribe primero la versión en ESPAÑOL y luego la versión en INGLÉS, "
         "separadas por una línea con '———'.\n"
-        "- Organiza cada versión en las mismas secciones que las noticias "
-        "(Wall Street / Mercados USA, Economía global, Economía venezolana, "
-        "M&A en Latinoamérica). Omite una sección si no tiene noticias.\n"
+        "- EL CENTRO ES SURAMÉRICA. Empieza y da más peso a las secciones "
+        "regionales (Suramérica: economía e inversión, Recursos del sur, M&A en "
+        "Suramérica, Economía venezolana). La sección 'Global y Wall Street' va al "
+        "FINAL, breve, y explicada en clave de qué significa para el inversor del "
+        "sur. Omite una sección si no tiene noticias.\n"
         "- En la sección de M&A, enfócate en operaciones corporativas reales "
-        "(fusiones, adquisiciones, OPAs) en Latinoamérica; ignora compras no "
-        "empresariales. Cuando sea pertinente, resalta con sobriedad las "
-        "oportunidades y señales positivas de inversión en la región, SIN "
-        "exagerar ni inventar.\n"
-        "- 2 a 4 frases por sección, sintetizando lo importante; no inventes "
-        "datos que no estén en los titulares ni cites cifras inexistentes.\n"
+        "(fusiones, adquisiciones, OPAs) en Suramérica; ignora compras no "
+        "empresariales.\n"
+        "- En 'Recursos del sur', destaca lo relevante para inversión (litio, "
+        "cobre, petróleo, gas, minería) en la región.\n"
+        "- Cuando haya oportunidades o señales positivas de inversión en el sur, "
+        "señálalas con SOBRIEDAD y sentido crítico; nada de tono publicitario, y "
+        "NUNCA inventes datos ni cifras que no estén en los titulares.\n"
+        "- 2 a 4 frases por sección, sintetizando lo importante.\n"
         "- Tono profesional y directo. Sin enlaces ni markdown de encabezados.\n"
         "- Usa <b>texto</b> de HTML para los títulos de sección (Telegram lo "
         "renderiza). No uses asteriscos ni '#'.\n\n"
