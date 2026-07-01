@@ -33,6 +33,11 @@ const FEEDS = [
   { cat: "M&A", url: GN(MA_Q_EN, "en-US", "US", "US:en") },
   { cat: "Venezuela", url: "https://www.elnacional.com/economia/feed/" },
   { cat: "Venezuela", url: "https://www.descifrado.com/category/economia/feed/" },
+  // Fuentes de nicho de LatAm (negocios, M&A, VC, fintech).
+  { cat: "Suramérica", url: "https://www.bloomberglinea.com/arc/outboundfeeds/rss/?outputType=xml" },
+  { cat: "Suramérica", url: "https://www.cronista.com/arc/outboundfeeds/rss/" },
+  { cat: "M&A", url: "https://latamlist.com/feed/" },
+  { cat: "Suramérica", url: "https://iupana.com/feed/" },
   { cat: "Global", url: "https://www.cnbc.com/id/100003114/device/rss/rss.html" },
   { cat: "Global", url: "https://feeds.bbci.co.uk/news/business/rss.xml" },
 ];
@@ -89,11 +94,13 @@ async function handleUpdate(update, env) {
   }
 
   try {
-    const [history, live, stored] = await Promise.all([
+    const [history, gnews, web, stored] = await Promise.all([
       kvGet(env, "chat:" + chatId, []),
       fetchNews(searchQueryFor(text)),
+      fetchWebNews(env, text),
       kvGet(env, "articles", []),
     ]);
+    const live = mergeNews(gnews, web, 12);
     const relevant = getContext(stored, text, 12);
     const answer = await aiAnswer(env, text, live, relevant, history);
     await sendMessage(env, chatId, answer);
@@ -220,6 +227,50 @@ function getContext(stored, text, n) {
   const cat = categoryFor(text);
   if (cat) for (const a of stored.filter((x) => x.c === cat).slice(0, n)) push(a);
   return out.slice(0, n);
+}
+
+// Búsqueda web (Tavily): rastrea todo internet, no solo Google News.
+// Solo se usa si hay TAVILY_API_KEY configurada.
+async function fetchWebNews(env, query, limit = 8) {
+  if (!env.TAVILY_API_KEY) return [];
+  try {
+    const r = await fetch("https://api.tavily.com/search", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        api_key: env.TAVILY_API_KEY,
+        query: query,
+        topic: "news",
+        days: 21,
+        max_results: limit,
+        search_depth: "basic",
+      }),
+    });
+    if (!r.ok) return [];
+    const data = await r.json();
+    return (data.results || []).map((x) => ({
+      t: x.title,
+      l: x.url,
+      d: x.published_date || "",
+      a: "",
+    }));
+  } catch {
+    return [];
+  }
+}
+
+// Une varias listas de noticias, quita duplicados y ordena por fecha (recientes primero).
+function mergeNews(a, b, limit) {
+  const seen = new Set();
+  const out = [];
+  for (const n of [...a, ...b]) {
+    const k = n.l || n.t;
+    if (!k || seen.has(k)) continue;
+    seen.add(k);
+    out.push(n);
+  }
+  out.sort((x, y) => (Date.parse(y.d) || 0) - (Date.parse(x.d) || 0));
+  return out.slice(0, limit);
 }
 
 // Noticias en vivo, ordenadas de más reciente a más antigua.

@@ -27,6 +27,7 @@ CF_ACCT = os.environ["CLOUDFLARE_ACCOUNT_ID"].strip()
 TG = os.environ["TELEGRAM_TOKEN"].strip()
 GEM = os.environ.get("GEMINI_API_KEY", "").strip()
 GROQ = os.environ.get("GROQ_API_KEY", "").strip()
+TAVILY = os.environ.get("TAVILY_API_KEY", "").strip()
 
 API = "https://api.cloudflare.com/client/v4"
 H = {"Authorization": f"Bearer {CF_TOKEN}"}
@@ -74,6 +75,7 @@ def main():
             {"type": "secret_text", "name": "TELEGRAM_TOKEN", "text": TG},
             {"type": "secret_text", "name": "GEMINI_API_KEY", "text": GEM},
             {"type": "secret_text", "name": "GROQ_API_KEY", "text": GROQ},
+            {"type": "secret_text", "name": "TAVILY_API_KEY", "text": TAVILY},
             {"type": "secret_text", "name": "WEBHOOK_SECRET", "text": wh},
             {"type": "kv_namespace", "name": "KV", "namespace_id": kv_id},
         ],
