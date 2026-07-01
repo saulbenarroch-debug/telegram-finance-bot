@@ -91,10 +91,10 @@ async function handleUpdate(update, env) {
   try {
     const [history, live, stored] = await Promise.all([
       kvGet(env, "chat:" + chatId, []),
-      fetchNews(text),
+      fetchNews(searchQueryFor(text)),
       kvGet(env, "articles", []),
     ]);
-    const relevant = relevantStored(stored, text, 10);
+    const relevant = getContext(stored, text, 12);
     const answer = await aiAnswer(env, text, live, relevant, history);
     await sendMessage(env, chatId, answer);
     history.push({ r: "user", c: text });
@@ -190,6 +190,38 @@ function relevantStored(stored, question, n) {
     .map((x) => x.a);
 }
 
+// Detecta el tema para usar una búsqueda curada (mejor cobertura que la frase literal).
+function searchQueryFor(text) {
+  const t = text.toLowerCase();
+  if (/\bm&a\b|fusion|fusión|adquisic|merger|acquisit|\bopa\b/.test(t)) return MA_Q_ES;
+  if (/suramérica|suramerica|sudamérica|sudamerica|latinoam|américa del sur/.test(t))
+    return SURAMERICA_Q;
+  return text;
+}
+
+function categoryFor(text) {
+  const t = text.toLowerCase();
+  if (/\bm&a\b|fusion|fusión|adquisic|merger|acquisit|\bopa\b/.test(t)) return "M&A";
+  if (/venezuela|bol[ií]var|bcv|pdvsa|caracas/.test(t)) return "Venezuela";
+  return null;
+}
+
+// Combina coincidencias por palabra + noticias recientes de la categoría detectada.
+function getContext(stored, text, n) {
+  const out = [];
+  const seen = new Set();
+  const push = (a) => {
+    if (a && !seen.has(a.l)) {
+      seen.add(a.l);
+      out.push(a);
+    }
+  };
+  for (const a of relevantStored(stored, text, n)) push(a);
+  const cat = categoryFor(text);
+  if (cat) for (const a of stored.filter((x) => x.c === cat).slice(0, n)) push(a);
+  return out.slice(0, n);
+}
+
 // Noticias en vivo, ordenadas de más reciente a más antigua.
 async function fetchNews(query, limit = 8) {
   try {
@@ -243,8 +275,9 @@ function buildPrompt(question, live, stored, history) {
     "HOY ES " + hoy + ". Las noticias de abajo YA fueron obtenidas de la web por " +
     "el sistema: ÚSALAS directamente. Nunca digas que no puedes acceder a internet " +
     "ni que no puedes 'copiar' de la web. Prioriza lo más reciente y CITA la fecha " +
-    "de cada noticia. Si las noticias de abajo no cubren el tema, dilo brevemente " +
-    "y responde con lo que sí haya, sin inventar.\n" +
+    "de cada noticia. Reporta los hechos relevantes de los últimos días o semanas " +
+    "con su fecha; NO digas 'no hay nada nuevo' si abajo hay noticias relacionadas. " +
+    "Solo di que no encontraste si de verdad no hay ninguna relacionada.\n" +
     "REGLAS:\n" +
     "- Responde en el idioma del usuario (por defecto español), de forma natural, " +
     "directa y bien explicada. Habla normal, como un buen analista que ayuda; NO " +
