@@ -30,8 +30,9 @@ VET = timezone(timedelta(hours=-4))
 # Maximo de titulares por categoria que se le pasan a la IA.
 MAX_PER_CATEGORY = 6
 
-# Modelo de Gemini. "flash" es rapido y entra en la capa gratuita.
-GEMINI_MODEL = "gemini-2.5-flash"
+# Modelo de Gemini. "flash-lite" es rapido, de buena calidad para resumir y tiene
+# una cuota gratuita mas alta que "flash" (que solo daba ~20 peticiones/dia).
+GEMINI_MODEL = "gemini-2.5-flash-lite"
 
 # User-Agent de navegador: algunas fuentes bloquean el agente por defecto.
 USER_AGENT = (
