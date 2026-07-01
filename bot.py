@@ -10,6 +10,7 @@ import html
 import os
 import re
 import time
+import urllib.parse
 from datetime import datetime, timedelta, timezone
 
 import feedparser
@@ -38,6 +39,31 @@ USER_AGENT = (
     "(KHTML, like Gecko) Chrome/120.0 Safari/537.36"
 )
 
+def google_news_rss(query, hl="es-419", gl="US", ceid="US:es-419"):
+    """Crea un feed RSS de Google News para una busqueda concreta.
+
+    Util para nichos sin RSS propio (ej. M&A en Latinoamerica): Google News
+    arma un feed con los resultados de la busqueda que le pasemos.
+    """
+    return (
+        "https://news.google.com/rss/search?q="
+        + urllib.parse.quote(query)
+        + f"&hl={hl}&gl={gl}&ceid={ceid}"
+    )
+
+
+# Consultas para el feed de M&A en Latinoamerica (una en español, una en ingles).
+_MA_QUERY_ES = (
+    '("fusiones y adquisiciones" OR "adquiere" OR "adquirió" OR "compra la" OR '
+    '"OPA" OR "toma el control de" OR "fusión con") (empresa OR compañía OR grupo '
+    "OR banco OR petrolera OR Latinoamérica OR Sudamérica OR Brasil OR México OR "
+    "Colombia OR Chile OR Argentina OR Perú)"
+)
+_MA_QUERY_EN = (
+    '(M&A OR merger OR acquisition OR acquires) ("Latin America" OR "South America" '
+    "OR Brazil OR Mexico OR Colombia OR Chile OR Argentina OR Peru)"
+)
+
 # Fuentes agrupadas por categoria. Cada categoria tiene un titulo (con emoji)
 # y una lista de feeds RSS verificados.
 SOURCES = {
@@ -62,6 +88,13 @@ SOURCES = {
         "feeds": [
             "https://www.elnacional.com/economia/feed/",
             "https://www.descifrado.com/category/economia/feed/",
+        ],
+    },
+    "latam_ma": {
+        "title": "\U0001F91D M&A en Latinoamerica",
+        "feeds": [
+            google_news_rss(_MA_QUERY_ES),
+            google_news_rss(_MA_QUERY_EN, hl="en-US", gl="US", ceid="US:en"),
         ],
     },
 }
@@ -184,15 +217,21 @@ def write_briefing(by_category, turno, fecha):
     noticias = format_news_for_prompt(by_category)
 
     prompt = (
-        f"Eres un analista financiero. Con estos titulares de noticias "
-        f"(resumen {turno.lower()} del {fecha}, hora Venezuela), redacta un "
-        "briefing breve y claro para un lector general.\n\n"
+        "Eres un analista financiero que escribe para Sureconomics, un servicio "
+        "que promueve la inversión en el sur, especialmente en Suramérica. Con "
+        f"estos titulares (resumen {turno.lower()} del {fecha}, hora Venezuela), "
+        "redacta un briefing breve y claro para un lector general.\n\n"
         "Instrucciones:\n"
         "- Escribe primero la versión en ESPAÑOL y luego la versión en INGLÉS, "
         "separadas por una línea con '———'.\n"
         "- Organiza cada versión en las mismas secciones que las noticias "
-        "(Wall Street / Mercados USA, Economía global, Economía venezolana). "
-        "Omite una sección si no tiene noticias.\n"
+        "(Wall Street / Mercados USA, Economía global, Economía venezolana, "
+        "M&A en Latinoamérica). Omite una sección si no tiene noticias.\n"
+        "- En la sección de M&A, enfócate en operaciones corporativas reales "
+        "(fusiones, adquisiciones, OPAs) en Latinoamérica; ignora compras no "
+        "empresariales. Cuando sea pertinente, resalta con sobriedad las "
+        "oportunidades y señales positivas de inversión en la región, SIN "
+        "exagerar ni inventar.\n"
         "- 2 a 4 frases por sección, sintetizando lo importante; no inventes "
         "datos que no estén en los titulares ni cites cifras inexistentes.\n"
         "- Tono profesional y directo. Sin enlaces ni markdown de encabezados.\n"
