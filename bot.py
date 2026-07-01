@@ -30,9 +30,13 @@ VET = timezone(timedelta(hours=-4))
 # Maximo de titulares por categoria que se le pasan a la IA.
 MAX_PER_CATEGORY = 6
 
-# Modelo de Gemini. "flash-lite" es rapido, de buena calidad para resumir y tiene
-# una cuota gratuita mas alta que "flash" (que solo daba ~20 peticiones/dia).
-GEMINI_MODEL = "gemini-2.5-flash-lite"
+# Modelos de Gemini en orden de preferencia. Cada modelo tiene su propia cuota
+# gratuita diaria, asi que si uno se agota (429), probamos el siguiente
+# automaticamente. flash-lite primero (mas cuota); flash da mejor prosa de respaldo.
+GEMINI_MODELS = [
+    "gemini-2.5-flash-lite",  # mas cuota gratis; primera opcion
+    "gemini-2.5-flash",       # respaldo (cuota diaria separada)
+]
 
 # User-Agent de navegador: algunas fuentes bloquean el agente por defecto.
 USER_AGENT = (
@@ -62,22 +66,16 @@ _SURAMERICA_QUERY = (
     "OR Perú OR Uruguay OR Bolivia OR Paraguay OR Ecuador) "
     "-fútbol -deportes -selección -partido"
 )
-# Recursos y commodities del sur (litio, cobre, petroleo, gas, mineria).
-_RECURSOS_QUERY = (
-    "(litio OR cobre OR petróleo OR gas OR minería OR mineral) "
-    "(Chile OR Perú OR Argentina OR Bolivia OR Brasil OR Colombia OR Guyana) "
-    "(proyecto OR inversión OR producción OR exportación OR yacimiento OR precio)"
-)
-# M&A enfocado en Suramerica (una consulta en español y otra en ingles).
+# M&A en Latinoamerica (una consulta en español y otra en ingles).
 _MA_QUERY_ES = (
     '("fusiones y adquisiciones" OR "adquiere" OR "adquirió" OR "compra la" OR '
     '"OPA" OR "toma el control de" OR "fusión con") (empresa OR compañía OR grupo '
-    "OR banco OR petrolera OR Suramérica OR Brasil OR Argentina OR Chile OR "
-    "Colombia OR Perú OR Uruguay OR Bolivia OR Ecuador)"
+    "OR banco OR petrolera OR Latinoamérica OR Sudamérica OR Brasil OR México OR "
+    "Colombia OR Chile OR Argentina OR Perú)"
 )
 _MA_QUERY_EN = (
-    '(M&A OR merger OR acquisition OR acquires) ("South America" OR Brazil OR '
-    "Argentina OR Chile OR Colombia OR Peru OR Uruguay OR Bolivia OR Guyana)"
+    '(M&A OR merger OR acquisition OR acquires) ("Latin America" OR "South America" '
+    "OR Brazil OR Mexico OR Colombia OR Chile OR Argentina OR Peru)"
 )
 
 # Fuentes agrupadas por categoria (orden = prominencia). El centro es Suramerica;
@@ -87,12 +85,8 @@ SOURCES = {
         "title": "\U0001F30E Suramerica: economia e inversion",
         "feeds": [google_news_rss(_SURAMERICA_QUERY)],
     },
-    "recursos": {
-        "title": "⛏️ Recursos del sur (litio, cobre, petroleo)",
-        "feeds": [google_news_rss(_RECURSOS_QUERY)],
-    },
-    "suramerica_ma": {
-        "title": "\U0001F91D M&A en Suramerica",
+    "latam_ma": {
+        "title": "\U0001F91D M&A en Latinoamerica",
         "feeds": [
             google_news_rss(_MA_QUERY_ES),
             google_news_rss(_MA_QUERY_EN, hl="en-US", gl="US", ceid="US:en"),
@@ -106,7 +100,7 @@ SOURCES = {
         ],
     },
     "global": {
-        "title": "\U0001F30D Global y Wall Street (contexto)",
+        "title": "\U0001F30D Wall Street y global (contexto)",
         "feeds": [
             "https://www.cnbc.com/id/100003114/device/rss/rss.html",
             "https://www.cnbc.com/id/20910258/device/rss/rss.html",
@@ -204,30 +198,44 @@ def format_news_for_prompt(by_category):
     return "\n\n".join(blocks)
 
 
-def gemini_generate(prompt, config=None, max_retries=4):
-    """Llama a Gemini reintentando ante errores temporales (503/429/500).
+def gemini_generate(prompt, config=None, max_retries=2):
+    """Llama a Gemini con fallback automatico entre modelos.
 
-    Google a veces devuelve 503 ('high demand') de forma pasajera. En vez de
-    caernos al primer intento, reintentamos con espera creciente.
+    - Si un modelo agota su cuota diaria (429), pasa al siguiente de GEMINI_MODELS
+      (cada modelo tiene su propia cuota gratis, asi multiplicamos el margen).
+    - Si el error es temporal (503 'high demand', 500, timeout), reintenta con
+      espera creciente en el mismo modelo y, si sigue fallando, pasa al siguiente.
+    - Solo un error no recuperable (400, autenticacion, etc.) detiene todo.
     """
     client = genai.Client(api_key=GEMINI_API_KEY)
-    delay = 5
-    for attempt in range(1, max_retries + 1):
-        try:
-            return client.models.generate_content(
-                model=GEMINI_MODEL, contents=prompt, config=config
-            )
-        except Exception as exc:  # noqa: BLE001
-            msg = str(exc)
-            transient = any(
-                s in msg for s in ("503", "429", "500", "UNAVAILABLE", "overloaded", "timeout")
-            )
-            if attempt < max_retries and transient:
-                print(f"[warn] Gemini intento {attempt}/{max_retries} fallo; reintento en {delay}s")
-                time.sleep(delay)
-                delay *= 2
-                continue
-            raise
+    last_exc = None
+    for model in GEMINI_MODELS:
+        delay = 5
+        for attempt in range(1, max_retries + 1):
+            try:
+                return client.models.generate_content(
+                    model=model, contents=prompt, config=config
+                )
+            except Exception as exc:  # noqa: BLE001
+                msg = str(exc)
+                last_exc = exc
+                quota = "429" in msg or "RESOURCE_EXHAUSTED" in msg
+                transient = any(
+                    s in msg for s in ("503", "500", "UNAVAILABLE", "overloaded", "timeout")
+                )
+                if quota:
+                    print(f"[warn] {model}: cuota agotada; paso al siguiente modelo")
+                    break  # siguiente modelo
+                if transient:
+                    if attempt < max_retries:
+                        print(f"[warn] {model} intento {attempt}/{max_retries} fallo; reintento en {delay}s")
+                        time.sleep(delay)
+                        delay *= 2
+                        continue
+                    print(f"[warn] {model}: sigue caido (temporal); paso al siguiente modelo")
+                    break  # siguiente modelo
+                raise  # error no recuperable
+    raise last_exc
 
 
 def write_briefing(by_category, turno, fecha):
@@ -253,15 +261,14 @@ def write_briefing(by_category, turno, fecha):
         "- Escribe primero la versión en ESPAÑOL y luego la versión en INGLÉS, "
         "separadas por una línea con '———'.\n"
         "- EL CENTRO ES VENEZUELA Y SURAMÉRICA. Da más peso a las secciones "
-        "regionales (Suramérica: economía e inversión, Recursos del sur, M&A en "
-        "Suramérica, Economía venezolana). La sección 'Global y Wall Street' va al "
-        "FINAL, breve, y en clave de qué significa para el inversor del sur. Omite "
-        "una sección si no tiene noticias.\n"
+        "regionales (Suramérica: economía e inversión, M&A en Latinoamérica, "
+        "Economía venezolana). La sección 'Wall Street y global' va al FINAL, "
+        "breve, y en clave de qué significa para el inversor del sur. Omite una "
+        "sección si no tiene noticias.\n"
         "- Por sección: 2 a 4 frases de síntesis y, cuando aporte, la línea de "
         "'Nuestra lectura:'.\n"
         "- En M&A enfócate en operaciones corporativas reales (fusiones, "
-        "adquisiciones, OPAs). En 'Recursos del sur', lo relevante para inversión "
-        "(litio, cobre, petróleo, gas, minería).\n"
+        "adquisiciones, OPAs) en Latinoamérica.\n"
         "- Usa <b>texto</b> de HTML para los títulos de sección (Telegram lo "
         "renderiza). Sin enlaces, sin asteriscos ni '#'.\n\n"
         f"NOTICIAS:\n{noticias}"

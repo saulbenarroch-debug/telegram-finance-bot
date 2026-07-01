@@ -101,7 +101,7 @@ def classify_high_impact(candidates):
         "- Devaluacion o salto cambiario fuerte (sobre todo del bolivar venezolano).\n"
         "- Decision YA TOMADA de cambio de tasas de un banco central importante (Fed, BCE).\n"
         "- Quiebra de una institucion sistemica o un shock geopolitico que mueva mercados.\n"
-        "- Operacion de M&A (fusion/adquisicion) MUY grande en Suramerica (miles de millones o "
+        "- Operacion de M&A (fusion/adquisicion) MUY grande en Latinoamerica (miles de millones o "
         "que redefina un sector).\n\n"
         "NO alerta (esto es ruido, IGNORALO):\n"
         "- Reportes rutinarios de precios ('petroleo hoy', 'el dolar cotiza a...').\n"
