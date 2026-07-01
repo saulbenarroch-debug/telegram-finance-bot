@@ -115,9 +115,9 @@ def classify_high_impact(candidates):
         'Si no hay ninguna verdaderamente grande, responde {"alertas": []}.\n\n'
         f"TITULARES:\n{listado}"
     )
-    resp = bot.gemini_generate(prompt, config={"response_mime_type": "application/json"})
+    text = bot.ai_generate(prompt, json_mode=True)
     try:
-        return json.loads(resp.text).get("alertas", [])
+        return json.loads(text).get("alertas", [])
     except json.JSONDecodeError:
         print("[warn] la IA no devolvio JSON valido; se omite esta corrida")
         return []

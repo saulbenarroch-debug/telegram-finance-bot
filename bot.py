@@ -23,6 +23,8 @@ load_dotenv()
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "").strip()
 CHAT_ID = os.environ.get("CHAT_ID", "").strip()
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
+# Proveedor de respaldo (opcional). Si esta definido y Gemini se agota, se usa Groq.
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "").strip()
 
 # Hora de Venezuela = UTC-4 (no usa horario de verano).
 VET = timezone(timedelta(hours=-4))
@@ -37,6 +39,9 @@ GEMINI_MODELS = [
     "gemini-2.5-flash-lite",  # mas cuota gratis; primera opcion
     "gemini-2.5-flash",       # respaldo (cuota diaria separada)
 ]
+
+# Modelo de Groq (respaldo gratis, API compatible con OpenAI).
+GROQ_MODEL = "llama-3.3-70b-versatile"
 
 # User-Agent de navegador: algunas fuentes bloquean el agente por defecto.
 USER_AGENT = (
@@ -238,6 +243,42 @@ def gemini_generate(prompt, config=None, max_retries=2):
     raise last_exc
 
 
+def groq_generate(prompt, json_mode=False):
+    """Genera texto con Groq (respaldo gratis, API compatible con OpenAI)."""
+    headers = {
+        "Authorization": f"Bearer {GROQ_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    body = {
+        "model": GROQ_MODEL,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.4,
+    }
+    if json_mode:
+        body["response_format"] = {"type": "json_object"}
+    resp = requests.post(
+        "https://api.groq.com/openai/v1/chat/completions",
+        headers=headers,
+        json=body,
+        timeout=60,
+    )
+    if not resp.ok:
+        raise RuntimeError(f"Groq respondio {resp.status_code}: {resp.text[:200]}")
+    return resp.json()["choices"][0]["message"]["content"]
+
+
+def ai_generate(prompt, json_mode=False):
+    """Genera texto con Gemini y, si se agota o cae del todo, con Groq de respaldo."""
+    config = {"response_mime_type": "application/json"} if json_mode else None
+    try:
+        return gemini_generate(prompt, config=config).text
+    except Exception as exc:  # noqa: BLE001
+        if GROQ_API_KEY:
+            print(f"[warn] Gemini no disponible ({str(exc)[:80]}); uso Groq de respaldo")
+            return groq_generate(prompt, json_mode=json_mode)
+        raise
+
+
 def write_briefing(by_category, turno, fecha):
     """Le pide a Gemini que redacte el resumen en español e ingles."""
     noticias = format_news_for_prompt(by_category)
@@ -274,8 +315,7 @@ def write_briefing(by_category, turno, fecha):
         f"NOTICIAS:\n{noticias}"
     )
 
-    resp = gemini_generate(prompt)
-    return resp.text.strip()
+    return ai_generate(prompt).strip()
 
 
 def build_sources_block(by_category):
