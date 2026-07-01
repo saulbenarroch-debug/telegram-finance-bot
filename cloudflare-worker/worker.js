@@ -92,6 +92,10 @@ async function handleUpdate(update, env) {
     await sendMessage(env, chatId, WELCOME);
     return;
   }
+  if (text === "/id") {
+    await sendMessage(env, chatId, "Tu chat ID es: " + chatId);
+    return;
+  }
 
   try {
     const [history, gnews, web, stored] = await Promise.all([

@@ -22,6 +22,8 @@ load_dotenv()
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "").strip()
 CHAT_ID = os.environ.get("CHAT_ID", "").strip()
+# Permite varios destinatarios separados por coma, ej. "123,456".
+CHAT_IDS = [c.strip() for c in CHAT_ID.split(",") if c.strip()]
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 # Proveedor de respaldo (opcional). Si esta definido y Gemini se agota, se usa Groq.
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "").strip()
@@ -364,20 +366,27 @@ def send_message(text):
         text = text[split_at:].lstrip("\n")
     chunks.append(text)
 
-    for chunk in chunks:
-        resp = requests.post(
-            url,
-            data={
-                "chat_id": CHAT_ID,
-                "text": chunk,
-                "parse_mode": "HTML",
-                "disable_web_page_preview": "true",
-            },
-            timeout=30,
-        )
-        if not resp.ok:
-            raise RuntimeError(f"Telegram respondio {resp.status_code}: {resp.text}")
-        print(f"[ok] enviado bloque de {len(chunk)} caracteres")
+    for chat_id in CHAT_IDS:
+        for chunk in chunks:
+            try:
+                resp = requests.post(
+                    url,
+                    data={
+                        "chat_id": chat_id,
+                        "text": chunk,
+                        "parse_mode": "HTML",
+                        "disable_web_page_preview": "true",
+                    },
+                    timeout=30,
+                )
+                if not resp.ok:
+                    # Un destinatario caido (ej. bloqueo al bot) no detiene a los demas.
+                    print(f"[warn] fallo enviar a {chat_id}: {resp.status_code} {resp.text[:120]}")
+                    break
+                print(f"[ok] {chat_id}: bloque de {len(chunk)} caracteres")
+            except Exception as exc:  # noqa: BLE001
+                print(f"[warn] error enviando a {chat_id}: {exc}")
+                break
 
 
 def main():
