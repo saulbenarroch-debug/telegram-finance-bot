@@ -190,12 +190,14 @@ function relevantStored(stored, question, n) {
     .map((x) => x.a);
 }
 
-// Noticias en vivo (búsqueda directa según la pregunta).
-async function fetchNews(query, limit = 6) {
+// Noticias en vivo: últimos 7 días, ordenadas de más reciente a más antigua.
+async function fetchNews(query, limit = 8) {
   try {
-    const res = await fetch(GN(query), { headers: UA });
+    const res = await fetch(GN(query + " when:7d"), { headers: UA });
     if (!res.ok) return [];
-    return parseRss(await res.text(), limit).map((it) => ({
+    const items = parseRss(await res.text(), 25);
+    items.sort((a, b) => (Date.parse(b.date) || 0) - (Date.parse(a.date) || 0));
+    return items.slice(0, limit).map((it) => ({
       t: it.title,
       l: it.link,
       a: it.author,
@@ -233,10 +235,15 @@ function buildPrompt(question, live, stored, history) {
         .join("\n") +
       "\n\n"
     : "";
+  const hoy = new Date().toISOString().slice(0, 10);
   return (
     "Eres un asistente útil, claro y preciso, especializado en economía y " +
     "finanzas, con foco en Venezuela y Suramérica (pero respondes cualquier duda " +
     "económica).\n" +
+    "HOY ES " + hoy + ". Prioriza SIEMPRE lo más reciente y CITA la fecha de cada " +
+    "noticia que menciones. NO uses conocimiento desactualizado: si las noticias " +
+    "de abajo no cubren lo que se pregunta, dilo con honestidad en vez de dar " +
+    "datos viejos o inventados.\n" +
     "REGLAS:\n" +
     "- Responde en el idioma del usuario (por defecto español), de forma natural, " +
     "directa y bien explicada. Habla normal, como un buen analista que ayuda; NO " +
