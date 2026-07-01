@@ -241,9 +241,9 @@ async function fetchWebNews(env, query, limit = 8) {
         api_key: env.TAVILY_API_KEY,
         query: query,
         topic: "news",
-        days: 21,
+        days: 30,
         max_results: limit,
-        search_depth: "basic",
+        search_depth: "advanced",
       }),
     });
     if (!r.ok) return [];
