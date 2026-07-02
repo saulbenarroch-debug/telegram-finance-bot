@@ -1,11 +1,6 @@
 name: Al Cierre
 
 on:
-  # Disparo temporal para probar (se retira despues de la primera corrida OK)
-  push:
-    paths:
-      - "al-cierre/**"
-      - ".github/workflows/al-cierre.yml"
   workflow_dispatch:
     inputs:
       force:

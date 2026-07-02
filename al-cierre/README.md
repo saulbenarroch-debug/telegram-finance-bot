@@ -4,14 +4,26 @@ Genera las 4 láminas diarias de "Al Cierre" (Rendigroup) con los valores de
 cierre de los mercados, listas para publicar (PNG 1080×1920, mismo diseño que
 la plantilla de Canva).
 
-## Flujo diario — 100% automático
+## Flujo diario — 100% automático, en la nube
 
-Una tarea programada de Windows (**"Al Cierre Telegram"**) corre `daily.py`
-de lunes a viernes a las **5:30 pm**: busca los datos, genera las láminas y
-las envía por Telegram (álbum de 4 fotos) a los chats configurados en el
-`.env` del bot de noticias. Si algo falla, manda una alerta ⚠️ por Telegram.
+El workflow de GitHub Actions **"Al Cierre"** (en el repo
+`telegram-finance-bot`, carpeta `al-cierre/`) corre **todos los días a las
+5:30 pm** hora Venezuela: busca los datos, genera las láminas y las envía por
+Telegram (álbum de 4 fotos) a los chats del bot. **No hace falta que la
+computadora esté encendida.** Si algo falla, manda una alerta ⚠️ por Telegram.
 
-También se puede correr a mano, todo o por partes:
+Notas del workflow:
+- El cron de GitHub puede retrasarse unos minutos (igual que pasaba con el
+  de noticias). Si se quiere puntualidad exacta, agregar un job en
+  cron-job.org que dispare el workflow via `workflow_dispatch` a las 5:30;
+  la guarda anti-duplicados (`last_sent.txt`) evita envíos dobles.
+- Para reenviar manualmente: pestaña Actions → Al Cierre → "Run workflow"
+  (con `force: true` si ya se envió hoy).
+- El histórico BCV (`bcv_history.json`) se guarda con un commit al final de
+  cada corrida.
+
+Esta carpeta local (`C:\Users\saulb\al-cierre`) es la copia de desarrollo;
+la que corre a diario es la del repo. También se puede correr a mano:
 
 ```
 py daily.py         # flujo completo (datos + láminas + Telegram)
@@ -21,12 +33,6 @@ py send_telegram.py # solo envío de las láminas de hoy
 ```
 
 O pedírselo a Claude: **"genera las láminas de al cierre"**.
-
-Administrar la tarea programada:
-`schtasks /run /tn "Al Cierre Telegram"` (probar ya) ·
-`schtasks /change /tn "Al Cierre Telegram" /st 17:30` (cambiar hora) ·
-`schtasks /delete /tn "Al Cierre Telegram"` (eliminar).
-El registro de cada corrida queda en `daily.log`.
 
 ## Salida
 
