@@ -49,7 +49,6 @@ YAHOO_TICKERS = [
 # Indices sin datos en Yahoo -> Investing.com
 INVESTING = [
     ("colcap", "https://www.investing.com/indices/colcap", "Colcap (Colombia)"),
-    ("ibc", "https://www.investing.com/indices/bursatil", "IBC (Venezuela)"),
 ]
 
 
@@ -105,6 +104,34 @@ def investing_quote(url):
     price = float(m_last.group(1).replace(",", ""))
     change = float(m_pct.group(1).replace(",", "")) if m_pct else None
     return price, change
+
+
+def ibc_caracas():
+    """IBC directo de bolsadecaracas.com.
+
+    La web publica cada cierre como noticia con slug
+    'indice-bursatil-caracas-cerro-en-5-48236-puntos-2jul'. Tomamos los dos
+    ultimos cierres distintos y calculamos la variacion nosotros mismos
+    (Investing.com muestra este indice congelado/desactualizado).
+    """
+    html = http_get("https://www.bolsadecaracas.com/", insecure=True)
+    matches = re.findall(
+        r"cerro-en-([0-9-]+)-puntos-([0-9]{1,2}[a-z]{3})", html
+    )
+    closes = []  # [(fecha_slug, valor)] en orden de aparicion (mas reciente primero)
+    for digits, fecha in matches:
+        value = int(digits.replace("-", "")) / 100.0
+        if not any(f == fecha for f, _ in closes):
+            closes.append((fecha, value))
+        if len(closes) == 2:
+            break
+    if not closes:
+        raise ValueError("no se encontraron cierres del IBC en bolsadecaracas.com")
+    value = closes[0][1]
+    change = None
+    if len(closes) == 2 and closes[1][1]:
+        change = (value - closes[1][1]) / closes[1][1] * 100.0
+    return value, change
 
 
 def bcv_rates():
@@ -172,6 +199,16 @@ def main():
         except Exception as e:
             out["errores"].append({"key": key, "error": str(e)})
             print(f"ERR {name:35s}: {e}")
+
+    # IBC: web oficial de la Bolsa de Caracas, variacion calculada por nosotros
+    try:
+        price, change = ibc_caracas()
+        out["quotes"]["ibc"] = {"name": "IBC (Venezuela)", "value": price, "change": change}
+        ch = f"{change:+.2f}%" if change is not None else "s/d"
+        print(f"OK  {'IBC (Venezuela)':35s} {price:>14,.2f}  {ch}")
+    except Exception as e:
+        out["errores"].append({"key": "ibc", "error": str(e)})
+        print(f"ERR IBC (Venezuela): {e}")
 
     try:
         rates = bcv_with_change(bcv_rates())
