@@ -1,0 +1,74 @@
+name: Al Cierre
+
+on:
+  # Disparo temporal para probar (se retira despues de la primera corrida OK)
+  push:
+    paths:
+      - "al-cierre/**"
+      - ".github/workflows/al-cierre.yml"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Forzar reenvio aunque ya se haya enviado hoy"
+        default: "false"
+  schedule:
+    # 21:30 UTC = 5:30 pm Venezuela, todos los dias. El cron de GitHub puede
+    # retrasarse unos minutos; para puntualidad exacta se puede disparar
+    # tambien via cron-job.org -> workflow_dispatch (la guarda anti-duplicados
+    # evita envios dobles).
+    - cron: "30 21 * * *"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: al-cierre
+  cancel-in-progress: false
+
+jobs:
+  enviar-laminas:
+    runs-on: ubuntu-latest
+    env:
+      TZ: America/Caracas
+    steps:
+      - name: Clonar repositorio
+        uses: actions/checkout@v4
+
+      - name: Verificar si ya se envio hoy
+        id: guard
+        run: |
+          HOY=$(date +%F)
+          if [ "${{ inputs.force }}" != "true" ] && [ "$(cat al-cierre/last_sent.txt 2>/dev/null)" = "$HOY" ]; then
+            echo "ya_enviado=true" >> "$GITHUB_OUTPUT"
+            echo "Las laminas de $HOY ya fueron enviadas; no se repite."
+          else
+            echo "ya_enviado=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Instalar Python
+        if: steps.guard.outputs.ya_enviado == 'false'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias
+        if: steps.guard.outputs.ya_enviado == 'false'
+        run: pip install requests
+
+      - name: Generar y enviar laminas
+        if: steps.guard.outputs.ya_enviado == 'false'
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+        run: python al-cierre/daily.py
+
+      - name: Guardar historico BCV y marca de envio
+        if: steps.guard.outputs.ya_enviado == 'false'
+        run: |
+          date +%F > al-cierre/last_sent.txt
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add al-cierre/bcv_history.json al-cierre/last_sent.txt
+          git commit -m "Al Cierre: historico $(date +%F) [skip ci]" || echo "sin cambios que guardar"
+          git pull --rebase origin main
+          git push

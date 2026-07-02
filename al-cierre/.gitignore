@@ -1,0 +1,5 @@
+out/
+daily.log
+data.json
+overrides.json
+__pycache__/
