@@ -13,10 +13,11 @@ Telegram (álbum de 4 fotos) a los chats del bot. **No hace falta que la
 computadora esté encendida.** Si algo falla, manda una alerta ⚠️ por Telegram.
 
 Notas del workflow:
-- El cron de GitHub puede retrasarse unos minutos (igual que pasaba con el
-  de noticias). Si se quiere puntualidad exacta, agregar un job en
-  cron-job.org que dispare el workflow via `workflow_dispatch` a las 5:30;
-  la guarda anti-duplicados (`last_sent.txt`) evita envíos dobles.
+- **Disparador: cron-job.org** llama al workflow via `workflow_dispatch` a las
+  5:30 pm (mismo patrón que `news.yml`). NO se usa el `schedule` de GitHub
+  porque llega con retrasos y podría duplicar el envío.
+- La guarda anti-duplicados (`last_sent.txt`) evita envíos dobles; solo se
+  estampa si el envío fue exitoso, así un fallo no bloquea reintentos.
 - Para reenviar manualmente: pestaña Actions → Al Cierre → "Run workflow"
   (con `force: true` si ya se envió hoy).
 - El histórico BCV (`bcv_history.json`) se guarda con un commit al final de
