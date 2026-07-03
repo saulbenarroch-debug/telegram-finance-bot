@@ -1,17 +1,14 @@
 name: Al Cierre
 
 on:
+  # El disparo puntual lo hace cron-job.org (workflow_dispatch) a las 5:30 pm
+  # hora Venezuela, mismo patron que news.yml. No se usa el "schedule" de
+  # GitHub porque llega con retrasos y podria duplicar el envio.
   workflow_dispatch:
     inputs:
       force:
         description: "Forzar reenvio aunque ya se haya enviado hoy"
         default: "false"
-  schedule:
-    # 21:30 UTC = 5:30 pm Venezuela, todos los dias. El cron de GitHub puede
-    # retrasarse unos minutos; para puntualidad exacta se puede disparar
-    # tambien via cron-job.org -> workflow_dispatch (la guarda anti-duplicados
-    # evita envios dobles).
-    - cron: "30 21 * * *"
 
 permissions:
   contents: write
