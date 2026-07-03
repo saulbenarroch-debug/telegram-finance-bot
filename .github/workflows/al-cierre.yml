@@ -58,7 +58,9 @@ jobs:
         run: python al-cierre/daily.py
 
       - name: Guardar historico BCV y marca de envio
-        if: steps.guard.outputs.ya_enviado == 'false'
+        # success() asegura que solo se estampa la fecha si el envio salio bien;
+        # si daily.py falla, NO se marca el dia como enviado y se puede reintentar.
+        if: success() && steps.guard.outputs.ya_enviado == 'false'
         run: |
           date +%F > al-cierre/last_sent.txt
           git config user.name "github-actions[bot]"
