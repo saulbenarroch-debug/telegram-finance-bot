@@ -29,6 +29,8 @@ CHROME = (
 
 def fmt_num(v, dec=2):
     """171688.61 -> '171.688,61' (formato es-VE)."""
+    if v is None:
+        return "s/d"
     s = f"{v:,.{dec}f}"
     return s.replace(",", "X").replace(".", ",").replace("X", ".")
 
@@ -214,9 +216,7 @@ def slide_latam(q, fecha, assets_uri):
     ]
     body = header("Cierre de índices bursatiles <br>y valores Latinoamericanas", assets_uri)
     for name, key, top, x, w, h, pct_top, lbl_top, circ_top in rows:
-        d = q.get(key)
-        if d is None or d.get("value") is None:
-            continue
+        d = q[key]
         isup = up(d["change"])
         cls = "up" if isup else "down"
         fsize = 30 if "<br>" in name else 32
@@ -241,6 +241,19 @@ def main():
     if ov_file.exists():
         for key, v in json.loads(ov_file.read_text(encoding="utf-8")).items():
             q.setdefault(key, {}).update(v)
+
+    # Si falta algun valor, la lamina sale con "s/d" en vez de romperse
+    expected = [
+        "eurusd", "ves_usd", "ves_eur",
+        "dowjones", "sp500", "nasdaq", "oro", "brent", "btc",
+        "stoxx50", "cac40", "dax", "ibex35", "ftse100",
+        "hangseng", "nikkei", "csi300",
+        "bovespa", "ipc", "ipsa", "merval", "colcap", "ibc",
+    ]
+    for key in expected:
+        q.setdefault(key, {"value": None, "change": None})
+        q[key].setdefault("value", None)
+        q[key].setdefault("change", None)
 
     today = date.today()
     fecha = f"{today.day}/{today.month:02d}/{today.year}"

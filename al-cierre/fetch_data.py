@@ -43,12 +43,8 @@ YAHOO_TICKERS = [
     ("bovespa",  "^BVSP",     "Bovespa (IBOV - Sao Pablo)"),
     ("ipc",      "^MXX",      "S&P BMV IPC (Mexico)"),
     ("ipsa",     "^IPSA",     "S&P IPSA (Chile)"),
-    ("merval",   "^MERV",     "S&P Merval (Argentina)"),
-]
-
-# Indices sin datos en Yahoo -> Investing.com
-INVESTING = [
-    ("colcap", "https://www.investing.com/indices/colcap", "Colcap (Colombia)"),
+    ("merval",   "^MERV",             "S&P Merval (Argentina)"),
+    ("colcap",   "^737809-COP-STRD",  "Colcap (Colombia)"),  # MSCI COLCAP, sucesor oficial
 ]
 
 
@@ -85,24 +81,6 @@ def yahoo_quote(ticker):
     if price is None or prev in (None, 0):
         raise ValueError(f"sin datos para {ticker}")
     change = (price - prev) / prev * 100.0
-    return price, change
-
-
-def investing_quote(url):
-    """Devuelve (ultimo, variacion_pct) raspando una pagina de Investing.com via curl."""
-    import subprocess
-
-    r = subprocess.run(
-        ["curl", "-s", "--max-time", "30", "-A", UA["User-Agent"], url],
-        capture_output=True, text=True, encoding="utf-8", errors="replace",
-    )
-    html = r.stdout
-    m_last = re.search(r'data-test="instrument-price-last"[^>]*>([\d.,]+)<', html)
-    m_pct = re.search(r'data-test="instrument-price-change-percent"[^>]*>[^<%]*?([+-]?[\d.,]+)%', html)
-    if not m_last:
-        raise ValueError(f"no se encontro el precio en {url}")
-    price = float(m_last.group(1).replace(",", ""))
-    change = float(m_pct.group(1).replace(",", "")) if m_pct else None
     return price, change
 
 
@@ -189,16 +167,6 @@ def main():
         except Exception as e:
             out["errores"].append({"key": key, "ticker": ticker, "error": str(e)})
             print(f"ERR {name:35s} {ticker}: {e}")
-
-    for key, url, name in INVESTING:
-        try:
-            price, change = investing_quote(url)
-            out["quotes"][key] = {"name": name, "value": price, "change": change}
-            ch = f"{change:+.2f}%" if change is not None else "s/d"
-            print(f"OK  {name:35s} {price:>14,.2f}  {ch}")
-        except Exception as e:
-            out["errores"].append({"key": key, "error": str(e)})
-            print(f"ERR {name:35s}: {e}")
 
     # IBC: web oficial de la Bolsa de Caracas, variacion calculada por nosotros
     try:
