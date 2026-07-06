@@ -113,8 +113,20 @@ def ibc_caracas():
 
 
 def bcv_rates():
-    """Devuelve {'usd': tasa, 'eur': tasa} desde bcv.org.ve (certificado invalido -> insecure)."""
+    """Devuelve ({'usd': tasa, 'eur': tasa}, fecha_valor) desde bcv.org.ve.
+
+    OJO: el BCV publica cada tarde la tasa que rige el DIA SIGUIENTE
+    ("Fecha Valor"). Por eso se devuelve tambien la fecha valor: la tasa
+    se guarda bajo el dia en que RIGE, y la lamina usa la vigente HOY
+    (igual que muestran AlCambio y demas apps).
+    """
     html = http_get("https://www.bcv.org.ve/", insecure=True)
+    m = re.search(r"Fecha\s*Valor.*?content=\"(\d{4}-\d{2}-\d{2})", html, re.S)
+    if not m:
+        m = re.search(r'date-display-single[^>]*content="(\d{4}-\d{2}-\d{2})', html)
+    if not m:
+        raise ValueError("no se encontro la fecha valor en bcv.org.ve")
+    fecha_valor = m.group(1)
     rates = {}
     for cur_id, key in (("dolar", "usd"), ("euro", "eur")):
         m = re.search(
@@ -125,29 +137,31 @@ def bcv_rates():
         if not m:
             raise ValueError(f"no se encontro la tasa {key} en bcv.org.ve")
         rates[key] = float(m.group(1).replace(".", "").replace(",", "."))
-    return rates
+    return rates, fecha_valor
 
 
-def bcv_with_change(rates):
-    """Calcula variacion % vs. la ultima tasa guardada en bcv_history.json."""
+def bcv_with_change(rates, fecha_valor):
+    """Guarda la tasa bajo su fecha valor y devuelve la VIGENTE hoy con su
+    variacion % vs. la fecha valor anterior (bcv_history.json)."""
     history = {}
     if HISTORY_FILE.exists():
         history = json.loads(HISTORY_FILE.read_text())
-    today = date.today().isoformat()
-    out = {}
-    for key, rate in rates.items():
-        prev_rate = None
-        # ultima fecha anterior a hoy con esta moneda
-        for d in sorted(history.keys(), reverse=True):
-            if d < today and key in history[d]:
-                prev_rate = history[d][key]
-                break
-        change = None
-        if prev_rate:
-            change = (rate - prev_rate) / prev_rate * 100.0
-        out[key] = {"value": rate, "change": change}
-    history.setdefault(today, {}).update(rates)
+    history.setdefault(fecha_valor, {}).update(rates)
     HISTORY_FILE.write_text(json.dumps(history, indent=2))
+
+    today = date.today().isoformat()
+    vigentes = sorted(k for k in history if k <= today)
+    if not vigentes:  # solo hay tasas futuras (no deberia pasar): usar la menor
+        vigentes = sorted(history)[:1]
+    eff, prev = vigentes[-1], (vigentes[-2] if len(vigentes) >= 2 else None)
+
+    out = {}
+    for key in ("usd", "eur"):
+        val = history[eff].get(key)
+        change = None
+        if val and prev and history[prev].get(key):
+            change = (val - history[prev][key]) / history[prev][key] * 100.0
+        out[key] = {"value": val, "change": change}
     return out
 
 
@@ -179,7 +193,7 @@ def main():
         print(f"ERR IBC (Venezuela): {e}")
 
     try:
-        rates = bcv_with_change(bcv_rates())
+        rates = bcv_with_change(*bcv_rates())
         usd, eur = rates["usd"], rates["eur"]
         out["quotes"]["ves_usd"] = {"name": "VES/USD (BCV)", **usd}
         out["quotes"]["ves_eur"] = {"name": "VES/EUR", **eur}
