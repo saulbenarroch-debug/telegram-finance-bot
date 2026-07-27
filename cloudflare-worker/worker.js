@@ -5,6 +5,14 @@
 const GEMINI_MODELS = ["gemini-2.5-flash-lite", "gemini-2.5-flash"];
 const GROQ_MODEL = "llama-3.3-70b-versatile";
 const UA = { "User-Agent": "Mozilla/5.0 (compatible; SureconomicsBot/1.0)" };
+// Para bajar la portada de un medio hay que parecer navegador, no bot.
+const BROWSER_UA = {
+  "User-Agent":
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) " +
+    "Chrome/126.0.0.0 Safari/537.36",
+  Accept: "text/html,application/xhtml+xml",
+  "Accept-Language": "es-419,es;q=0.9",
+};
 
 const GN = (q, hl = "es-419", gl = "US", ceid = "US:es-419") =>
   "https://news.google.com/rss/search?q=" +
@@ -155,6 +163,24 @@ export default {
           });
         }
         const ed = await getEntorno(env, !!url.searchParams.get("force"));
+        // formato=json: lo que consume entorno/render.py para armar las láminas.
+        if (url.searchParams.get("formato") === "json") {
+          return new Response(
+            JSON.stringify(
+              {
+                hoy: ed.datos.hoy,
+                generado: new Date(ed.ts).toISOString(),
+                datos: ed.datos,
+                secciones: ed.secciones || {},
+                portada: ed.portada || null,
+                titulares: ed.titulares || [],
+              },
+              null,
+              2
+            ),
+            { headers: { "Content-Type": "application/json; charset=utf-8" } }
+          );
+        }
         return new Response(ed.parts.join("\n\n———\n\n"), {
           headers: { "Content-Type": "text/plain; charset=utf-8" },
         });
@@ -1103,8 +1129,13 @@ function promptEntorno(d, noticias) {
     "###CUERPO\n" +
     "Exactamente 3 párrafos cortos separados por una línea en blanco: (1) el hecho " +
     "y sus cifras, (2) su impacto, (3) perspectiva estratégica.\n" +
+    "###FUENTE\n" +
+    "Solo el número del titular de la lista en que se basa la noticia principal " +
+    "(un dígito o dos, nada más). De ahí se saca la foto de la lámina.\n" +
     "###LATAM\n" +
-    "Exactamente 4 ítems de países DISTINTOS de América Latina, separados por una " +
+    "Exactamente 4 ítems de países DISTINTOS de América Latina (Estados Unidos, " +
+    "Europa y Asia NO cuentan como país de la región, aunque la noticia afecte a " +
+    "Latam), separados por una " +
     "línea con tres guiones (---). Cada ítem: primera línea 'PAÍS — Titular en " +
     "español' (sin punto final); siguiente línea, un sumario de máximo 3 líneas " +
     "que NO empiece repitiendo el nombre del país. No incluyas Venezuela aquí (ya " +
@@ -1131,7 +1162,7 @@ function promptEntorno(d, noticias) {
 
 function parseSecciones(txt) {
   const out = {};
-  const re = /###\s*(CONTRAPORTADA|NICHO|TITULAR|SUBTITULO|CUERPO|LATAM)\s*\n?/gi;
+  const re = /###\s*(CONTRAPORTADA|NICHO|TITULAR|SUBTITULO|CUERPO|FUENTE|LATAM)\s*\n?/gi;
   const marcas = [];
   let m;
   while ((m = re.exec(txt)) !== null) {
@@ -1178,6 +1209,28 @@ async function buildEntorno(env) {
 
   const crudo = await aiEntorno(env, promptEntorno(datos, noticias));
   const s = parseSecciones(crudo);
+
+  // La noticia que sustenta la nota principal: de ahí sale la foto de la lámina.
+  const idx = parseInt((s.FUENTE || "").match(/\d+/) || [NaN], 10) - 1;
+  // Candidatas: la que citó el modelo primero, luego las mejores de Venezuela.
+  // Muchos medios no publican og:image o bloquean la descarga, así que se
+  // prueban varias en vez de quedarse sin foto.
+  const candidatas = [];
+  for (const n of [noticias[idx]].concat(noticias.filter((x) => x.g === "VZ"), noticias)) {
+    if (n && n.l && !candidatas.some((c) => c.l === n.l)) candidatas.push(n);
+    if (candidatas.length >= 4) break;
+  }
+  let portada = null;
+  for (const c of candidatas) {
+    const img = await ogImagen(c.l);
+    if (!portada) {
+      portada = { titulo: sinMedio(c.t), medio: medioDe(c.t), url: c.l, fecha: c.d || "", imagen: img };
+    }
+    if (img) {
+      portada = { titulo: sinMedio(c.t), medio: medioDe(c.t), url: c.l, fecha: c.d || "", imagen: img };
+      break;
+    }
+  }
   const cabecera =
     "📰 <b>ENTORNO EN VIÑETAS</b> — Resumen semanal\n" +
     "<i>" + fechaLarga(datos.hoy) + " · Sureconomics</i>";
@@ -1210,7 +1263,19 @@ async function buildEntorno(env) {
     partes.push(bloqueFuentes(noticias));
   }
 
-  return { ts: Date.now(), fecha: datos.hoy, parts: partes, datos: datos };
+  return {
+    ts: Date.now(),
+    fecha: datos.hoy,
+    parts: partes,
+    datos: datos,
+    // Para el renderizador de láminas (entorno/render.py): secciones sueltas,
+    // no el texto ya maquetado para Telegram.
+    secciones: s,
+    portada: portada,
+    titulares: noticias.slice(0, 12).map((n) => ({
+      t: sinMedio(n.t), medio: medioDe(n.t), l: n.l || "", d: n.d || "", g: n.g || "",
+    })),
+  };
 }
 
 function bloqueFuentes(noticias) {
@@ -1225,6 +1290,27 @@ function bloqueFuentes(noticias) {
     "Yahoo Finance (índices, commodities, cripto).</i>" +
     (links ? "\n\n<b>Titulares usados</b>\n" + links : "")
   );
+}
+
+// Foto de la lámina: la imagen destacada (og:image) del artículo fuente. Es lo
+// único que puede ilustrar la noticia de la semana sin criterio humano.
+async function ogImagen(url) {
+  if (!url) return "";
+  try {
+    // Con el UA de bot, medios como Infobae devuelven 403 y no hay foto.
+    const r = await fetch(url, { headers: BROWSER_UA, redirect: "follow" });
+    if (!r.ok) return "";
+    const html = (await r.text()).slice(0, 200000);
+    for (const re of [
+      /<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i,
+      /<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i,
+      /<meta[^>]+name=["']twitter:image["'][^>]+content=["']([^"']+)["']/i,
+    ]) {
+      const m = html.match(re);
+      if (m && /^https?:\/\//.test(m[1])) return decodeEntities(m[1]);
+    }
+  } catch {}
+  return "";
 }
 
 // Caché de 6 h: dos pedidos seguidos no queman cuota de IA ni cambian el texto.

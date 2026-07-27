@@ -1,0 +1,87 @@
+name: Entorno en Vinetas
+
+on:
+  # El disparo puntual lo hace cron-job.org (workflow_dispatch) los VIERNES a
+  # las 8:00 am hora Venezuela, mismo patron que al-cierre.yml y news.yml. No se
+  # usa el "schedule" de GitHub porque llega con retrasos.
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Forzar reenvio aunque ya se haya enviado esta semana"
+        default: "false"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: entorno
+  cancel-in-progress: false
+
+jobs:
+  laminas:
+    runs-on: ubuntu-latest
+    env:
+      TZ: America/Caracas
+    steps:
+      - name: Clonar repositorio
+        uses: actions/checkout@v4
+
+      - name: Verificar si ya se envio esta semana
+        id: guard
+        run: |
+          SEMANA=$(date +%G-W%V)
+          if [ "${{ inputs.force }}" != "true" ] && [ "$(cat entorno/last_sent.txt 2>/dev/null)" = "$SEMANA" ]; then
+            echo "ya_enviado=true" >> "$GITHUB_OUTPUT"
+            echo "La edicion de $SEMANA ya fue enviada; no se repite."
+          else
+            echo "ya_enviado=false" >> "$GITHUB_OUTPUT"
+            echo "semana=$SEMANA" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Instalar Python
+        if: steps.guard.outputs.ya_enviado == 'false'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # El runner de ubuntu ya trae Google Chrome, que es lo que usa el render
+      # para convertir el HTML en PNG. No hay que instalar nada mas.
+      - name: Verificar Chrome
+        if: steps.guard.outputs.ya_enviado == 'false'
+        run: google-chrome --version
+
+      - name: Generar laminas
+        if: steps.guard.outputs.ya_enviado == 'false'
+        env:
+          WEBHOOK_SECRET: ${{ secrets.WEBHOOK_SECRET }}
+          CHROME_BIN: google-chrome
+        run: python entorno/render.py
+
+      - name: Enviar por Telegram
+        if: steps.guard.outputs.ya_enviado == 'false'
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+        run: python entorno/send_telegram.py
+
+      - name: Marcar la semana como enviada
+        # success() asegura que solo se estampa si el envio salio bien: un fallo
+        # no bloquea el reintento.
+        if: success() && steps.guard.outputs.ya_enviado == 'false'
+        run: |
+          date +%G-W%V > entorno/last_sent.txt
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add entorno/last_sent.txt
+          git commit -m "Entorno en Vinetas: enviado $(date +%G-W%V) [skip ci]" || echo "sin cambios"
+          git pull --rebase origin main
+          git push
+
+      - name: Guardar laminas como artefacto
+        if: always() && steps.guard.outputs.ya_enviado == 'false'
+        uses: actions/upload-artifact@v4
+        with:
+          name: entorno-laminas
+          path: entorno/out/**
+          retention-days: 30
+          if-no-files-found: ignore
