@@ -33,9 +33,14 @@ const FEEDS = [
   { cat: "M&A", url: GN(MA_Q_EN, "en-US", "US", "US:en") },
   { cat: "Venezuela", url: "https://www.elnacional.com/economia/feed/" },
   { cat: "Venezuela", url: "https://www.descifrado.com/category/economia/feed/" },
-  // Fuentes de nicho de LatAm (negocios, M&A, VC, fintech).
-  { cat: "Suramérica", url: "https://www.bloomberglinea.com/arc/outboundfeeds/rss/?outputType=xml" },
-  { cat: "Suramérica", url: "https://www.cronista.com/arc/outboundfeeds/rss/" },
+  { cat: "Venezuela", url: "https://efectococuyo.com/economia/feed/" },
+  { cat: "Venezuela", url: "https://talcualdigital.com/category/economia/feed/" },
+  { cat: "Venezuela", url: "https://elestimulo.com/feed/" },
+  // Fuentes de nicho de LatAm (negocios, M&A, VC, fintech). Se usan los feeds de
+  // SECCIÓN de Bloomberg Línea, no el del sitio completo: el generalista (y el de
+  // El Cronista, ya retirado) traía recetas y horóscopos que ensuciaban todo.
+  { cat: "Suramérica", url: "https://www.bloomberglinea.com/arc/outboundfeeds/rss/category/economia/?outputType=xml" },
+  { cat: "Suramérica", url: "https://www.bloomberglinea.com/arc/outboundfeeds/rss/category/mercados/?outputType=xml" },
   { cat: "M&A", url: "https://latamlist.com/feed/" },
   { cat: "Suramérica", url: "https://iupana.com/feed/" },
   { cat: "Global", url: "https://www.cnbc.com/id/100003114/device/rss/rss.html" },
@@ -49,7 +54,87 @@ const WELCOME =
   "anteriores. Ejemplos:\n" +
   "• ¿Qué está pasando con el dólar en Venezuela?\n" +
   "• Busca noticias de litio en Argentina\n" +
-  "• ¿Qué pasó esta semana con M&A en la región?";
+  "• ¿Qué pasó esta semana con M&A en la región?\n\n" +
+  "📰 Y para el newsletter semanal, pídeme:\n" +
+  "• Dame el entorno en viñetas   (o /entorno)\n" +
+  "Se arma solo cada viernes a las 8:00 a.m. (VET); si lo pides después, te lo " +
+  "devuelvo al instante.";
+
+// ---------------------------------------------------------------------------
+// ENTORNO EN VIÑETAS — newsletter semanal (contraportada, noticia principal,
+// economía en cifras y Latam enlatada). Regla de oro: las CIFRAS las calcula
+// este código a partir de fuentes duras; la IA solo redacta la prosa.
+// ---------------------------------------------------------------------------
+const ENTORNO_CRON = "0 12 * * 5"; // viernes 12:00 UTC = 8:00 a.m. VET
+const ENTORNO_TTL = 6 * 60 * 60; // seg. que se reusa una edición ya armada
+const ENTORNO_MAX_EDAD = 8 * 24 * 60 * 60 * 1000; // ms antes de avisar que está vieja
+
+// Bases de comparación anual (editables por KV: entorno:bases).
+const BASES = {
+  bcv: 301.37, // tasa BCV del 1-ene-2026
+  ibc: 2082.26, // cierre del IBC en 2025
+};
+
+// Último IPC publicado por el BCV (editable por chat con /ipc).
+const IPC_DEFAULT = { mes: "junio 2026", mensual: 13.8, acumulada: 129.8 };
+
+// Semillas del histórico: permiten calcular variación semanal desde el día 1.
+const SEED_BCV = { "2026-07-21": 737.2321, "2026-07-24": 742.2292 };
+const SEED_IBC = { "2026-07-17": 5144.74, "2026-07-23": 5173.61 };
+
+const YF_TICKERS = [
+  { k: "dow", t: "^DJI", n: "Dow Jones", dec: 2 },
+  { k: "sp500", t: "^GSPC", n: "S&P 500", dec: 2 },
+  { k: "nasdaq", t: "^IXIC", n: "Nasdaq", dec: 2 },
+  { k: "brent", t: "BZ=F", n: "Petróleo Brent", dec: 2 },
+  { k: "oro", t: "GC=F", n: "Oro", dec: 2 },
+  { k: "btc", t: "BTC-USD", n: "Bitcoin", dec: 0 },
+  { k: "eth", t: "ETH-USD", n: "Ethereum", dec: 0 },
+];
+
+const ENTORNO_Q_VZ =
+  "(Venezuela) (economía OR BCV OR dólar OR inflación OR Pdvsa OR petróleo OR " +
+  "bonos OR deuda OR sanciones OR bolívar OR reconstrucción)";
+const ENTORNO_Q_LATAM =
+  "(economía OR PIB OR inflación OR \"banco central\" OR tasa OR déficit OR " +
+  "exportaciones OR adquisición) (México OR Brasil OR Argentina OR Colombia OR " +
+  "Chile OR Perú OR Uruguay) -fútbol -deportes";
+const ENTORNO_Q_GLOBAL =
+  "(petróleo OR Brent OR \"Wall Street\" OR Fed OR oro OR bitcoin OR OPEP) " +
+  "(mercados OR precio OR cierre OR semana)";
+
+// Los feeds generalistas (El Cronista, Bloomberg Línea) traen mucho estilo de
+// vida y clickbait: sin estos filtros el newsletter termina citando recetas.
+const JUNK_RE =
+  /(receta|hor[oó]scopo|farándula|far[aá]ndula|f[uú]tbol|futbol|deportiv|selecci[oó]n nacional|clima|lluvia|hurac[aá]n|visa|pasaporte|migrator|migrante|turismo|viral|tiktok|belleza|dieta|bicarbonato|limpieza|truco|ciudad flotante|anses|jubilad|loter[íi]a|netflix|serie|pel[íi]cula|famoso|astrolog|zodiac)/i;
+const ECON_RE =
+  /(econom|inflaci|ipc|pib|d[oó]lar|euro|peso|real |bolívar|bol[íi]var|banco central|tasa|inter[eé]s|bono|deuda|d[eé]ficit|fiscal|export|import|inversi|mercado|bolsa|acciones|adquisici|fusi[oó]n|compra|adquiere|opa|petr[oó]leo|crudo|barril|gas|miner|litio|cobre|energ|fmi|\bbid\b|banco mundial|moody|fitch|riesgo pa[íi]s|reservas|remesas|empleo|desempleo|salario|impuesto|arancel|comercio|superávit|super[aá]vit|pdvsa|bcv|selic|banxico|cepal|petrobras|pemex|ecopetrol|codelco|cemex|empresa|compañ|grupo |banco |fintech|financiamiento|financiaci|refinanc|cr[eé]dito)/i;
+// Hechos duros de política económica o corporativa: es lo que debe encabezar.
+const MACRO_FUERTE_RE =
+  /(inflaci|ipc|pib|devaluaci|default|reestructuraci|sanci[oó]n|sanciones|licencia|ofac|fmi|banco mundial|banco central|tasa de inter[eé]s|d[eé]ficit|super[aá]vit|deuda|bonos|adquisici|fusi[oó]n|emisi[oó]n|arancel|reservas|barril|opep|producci[oó]n petrolera|recorte|alza de tasas|calificaci[oó]n)/i;
+// Medios con estándar editorial: suma reputación, no la exige.
+const MEDIOS_OK_RE =
+  /(reuters|bloomberg|financial times|wall street journal|el pa[íi]s|expansi[oó]n|banca y negocios|finanzas ?digital|efecto cocuyo|descifrado|el nacional|el est[íi]mulo|talcual|infobae|el cronista|la naci[oó]n|clar[íi]n|folha|valor econ|estad[aã]o|semana|la rep[uú]blica|portafolio|el mercurio|diario financiero|el economista|el financiero|forbes|am[eé]rica econom[íi]a|latamlist|iupana|world oil|argus|platts|s&p global|cepal)/i;
+// Formatos de tráfico: titulares que nunca traen un hecho nuevo.
+const CLICKBAIT_RE =
+  /(esto es lo que|todo lo que|as[íi] es como|mira c[oó]mo|no vas a creer|te contamos|en vivo|minuto a minuto|paso a paso|lo que debes saber|cu[áa]nto cuesta|as[íi] qued[oó]|ranking de|los \d+ mejores|conoce |sepa |encuesta de opini)/i;
+
+// Para repartir cupo: un país no puede acaparar la sección de Latam.
+const PAISES = [
+  ["Argentina", /argentin|milei|merval|buenos aires|\bafip\b/i],
+  ["Brasil", /brasil|brazil|lula|selic|ibovespa|petrobras|\breal brasile/i],
+  ["México", /m[eé]xico|mexican|banxico|sheinbaum|pemex|cemex/i],
+  ["Colombia", /colombia|petro|ecopetrol|colcap|bancolombia|cibest/i],
+  ["Chile", /chile|codelco|\bipsa\b|boric/i],
+  ["Perú", /per[uú]\b|lima|sunat/i],
+  ["Ecuador", /ecuador|noboa/i],
+  ["Uruguay", /uruguay/i],
+  ["Bolivia", /bolivia/i],
+  ["Paraguay", /paraguay/i],
+  ["Panamá", /panam[aá]/i],
+  ["Rep. Dominicana", /dominican/i],
+  ["Centroamérica", /costa rica|guatemala|honduras|salvador|nicaragua/i],
+];
 
 export default {
   async fetch(request, env, ctx) {
@@ -58,6 +143,24 @@ export default {
     if (url.pathname === "/ingest" && url.searchParams.get("key") === env.WEBHOOK_SECRET) {
       const n = await ingest(env);
       return new Response("ingested " + n);
+    }
+    // Endpoint protegido para revisar el newsletter sin pasar por Telegram.
+    // /entorno?key=...&force=1 rearma la edición; &datos=1 muestra solo las cifras.
+    if (url.pathname === "/entorno" && url.searchParams.get("key") === env.WEBHOOK_SECRET) {
+      try {
+        if (url.searchParams.get("datos")) {
+          const d = await gatherEntornoData(env);
+          return new Response(JSON.stringify(d, null, 2), {
+            headers: { "Content-Type": "application/json; charset=utf-8" },
+          });
+        }
+        const ed = await getEntorno(env, !!url.searchParams.get("force"));
+        return new Response(ed.parts.join("\n\n———\n\n"), {
+          headers: { "Content-Type": "text/plain; charset=utf-8" },
+        });
+      } catch (e) {
+        return new Response("error: " + (e && e.message ? e.message : e), { status: 500 });
+      }
     }
     if (request.method !== "POST") return new Response("Sureconomics bot activo ✅");
     if (
@@ -76,9 +179,13 @@ export default {
     return new Response("ok");
   },
 
-  // Cron: ingiere noticias al historial (se configura el schedule al desplegar).
+  // Crons (se configuran al desplegar):
+  //  - "0 */3 * * *" ingiere noticias y tasas al historial.
+  //  - ENTORNO_CRON (viernes 8:00 a.m. VET) prearma el newsletter semanal y lo
+  //    deja en KV. No se envía a nadie: queda listo para cuando lo pidan.
   async scheduled(event, env, ctx) {
-    ctx.waitUntil(ingest(env));
+    if (event.cron === ENTORNO_CRON) ctx.waitUntil(getEntorno(env, true));
+    else ctx.waitUntil(ingest(env));
   },
 };
 
@@ -94,6 +201,16 @@ async function handleUpdate(update, env) {
   }
   if (text === "/id") {
     await sendMessage(env, chatId, "Tu chat ID es: " + chatId);
+    return;
+  }
+  // Newsletter semanal, por comando o pedido en lenguaje natural.
+  if (esPedidoEntorno(text)) {
+    await enviarEntorno(env, chatId, /\bforz|de nuevo|refresc|actualiz/i.test(text));
+    return;
+  }
+  // Actualizar el IPC del BCV a mano: "/ipc 13,8 129,8 junio 2026".
+  if (text.toLowerCase().startsWith("/ipc")) {
+    await comandoIpc(env, chatId, text);
     return;
   }
 
@@ -145,13 +262,56 @@ async function ingest(env) {
       for (const it of parseRss(xml, 12)) {
         if (!it.link || seen.has(it.link)) continue;
         seen.add(it.link);
-        stored.unshift({ t: it.title, l: it.link, d: it.date || "", a: it.author || "", c: f.cat });
+        stored.unshift({
+          t: it.title,
+          l: it.link,
+          d: it.date || "",
+          a: it.author || "",
+          c: f.cat,
+          s: it.resumen || "",
+        });
         added++;
       }
     } catch {}
   }
   await kvPut(env, "articles", stored.slice(0, 300));
+  // De paso guardamos tasa BCV e IBC del día: así el newsletter puede calcular
+  // la variación semanal con datos propios (ninguna fuente la publica).
+  await registrarHistoricos(env);
   return added;
+}
+
+// Anota el valor de hoy en los históricos de KV (idempotente por fecha).
+async function registrarHistoricos(env) {
+  const hoy = hoyVET();
+  try {
+    const t = await fetchTasas();
+    if (t.bcv) {
+      const h = await kvGet(env, "hist:bcv", SEED_BCV);
+      h[t.fechaBcv || hoy] = t.bcv;
+      await kvPut(env, "hist:bcv", podarHist(h));
+    }
+    if (t.paralelo) {
+      const h = await kvGet(env, "hist:par", {});
+      h[t.fechaPar || hoy] = t.paralelo;
+      await kvPut(env, "hist:par", podarHist(h));
+    }
+  } catch {}
+  try {
+    const ibc = await fetchIbc();
+    if (ibc.valor) {
+      const h = await kvGet(env, "hist:ibc", SEED_IBC);
+      h[ibc.fecha || hoy] = ibc.valor;
+      await kvPut(env, "hist:ibc", podarHist(h));
+    }
+  } catch {}
+}
+
+// Deja solo las últimas 120 fechas para que el valor de KV no crezca sin límite.
+function podarHist(h) {
+  const out = {};
+  for (const k of Object.keys(h).sort().slice(-120)) out[k] = h[k];
+  return out;
 }
 
 function parseRss(xml, limit) {
@@ -166,9 +326,22 @@ function parseRss(xml, limit) {
     const date = grab(/<pubDate>([\s\S]*?)<\/pubDate>/);
     let author = grab(/<dc:creator>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/dc:creator>/);
     if (!author) author = grab(/<author>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/author>/);
-    if (title) items.push({ title, link, date, author });
+    // El resumen del feed es la diferencia entre que la IA redacte con detalle o
+    // que especule a partir de un titular suelto.
+    const resumen = limpiarHtml(
+      grab(/<description>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/description>/)
+    ).slice(0, 320);
+    if (title) items.push({ title, link, date, author, resumen });
   }
   return items;
+}
+
+// Los resúmenes de RSS vienen con HTML y "Leer más": se deja solo texto.
+function limpiarHtml(s) {
+  return String(s || "")
+    .replace(/<[^>]*>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function decodeEntities(s) {
@@ -257,6 +430,7 @@ async function fetchWebNews(env, query, limit = 8) {
       l: x.url,
       d: x.published_date || "",
       a: "",
+      s: limpiarHtml(x.content || "").slice(0, 320),
     }));
   } catch {
     return [];
@@ -289,6 +463,7 @@ async function fetchNews(query, limit = 8) {
       l: it.link,
       a: it.author,
       d: it.date,
+      s: it.resumen || "",
     }));
   } catch {
     return [];
@@ -403,6 +578,767 @@ async function callGroq(env, prompt) {
   return data.choices[0].message.content;
 }
 
+// ===========================================================================
+// ENTORNO EN VIÑETAS
+// ===========================================================================
+
+// --- Utilidades de fecha y formato (es-VE) ---
+const MESES = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
+const MESES_LARGOS = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio",
+  "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
+
+// Venezuela es UTC-4 fijo (no hay horario de verano).
+function fechaVET(ms) {
+  return new Date((ms === undefined ? Date.now() : ms) - 4 * 3600 * 1000)
+    .toISOString()
+    .slice(0, 10);
+}
+const hoyVET = () => fechaVET();
+
+function fechaCorta(iso) {
+  if (!iso) return "";
+  const p = iso.slice(0, 10).split("-");
+  return String(Number(p[2])) + "-" + (MESES[Number(p[1]) - 1] || p[1]);
+}
+
+function fechaLarga(iso) {
+  if (!iso) return "";
+  const p = iso.slice(0, 10).split("-");
+  return Number(p[2]) + " de " + (MESES_LARGOS[Number(p[1]) - 1] || p[1]) + " de " + p[0];
+}
+
+function num(n, dec = 2) {
+  if (n === null || n === undefined || !isFinite(n)) return "s/d";
+  const s = Math.abs(n).toFixed(dec).split(".");
+  const ent = s[0].replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+  return (n < 0 ? "-" : "") + ent + (s[1] ? "," + s[1] : "");
+}
+
+function pct(p, dec = 1) {
+  if (p === null || p === undefined || !isFinite(p)) return "s/d";
+  return (p >= 0 ? "+" : "") + num(p, dec) + "%";
+}
+
+function aNumero(txt) {
+  // "742,22920000" / "1.234,56" -> 742.2292 / 1234.56
+  const n = parseFloat(String(txt).replace(/\./g, "").replace(",", "."));
+  return isFinite(n) ? n : null;
+}
+
+// --- Fuentes duras ---
+
+// Tasas: ve.dolarapi.com da oficial y paralelo en un solo JSON; si falla, se
+// raspa bcv.org.ve (solo trae la oficial).
+async function fetchTasas() {
+  const out = { bcv: null, paralelo: null, fechaBcv: "", fechaPar: "", fuentePar: "promedio de mercado" };
+  try {
+    const r = await fetch("https://ve.dolarapi.com/v1/dolares", { headers: UA });
+    if (r.ok) {
+      for (const x of await r.json()) {
+        const v = x.promedio || x.venta || x.compra;
+        if (!v) continue;
+        if (x.fuente === "oficial") {
+          out.bcv = v;
+          out.fechaBcv = (x.fechaActualizacion || "").slice(0, 10);
+        } else if (x.fuente === "paralelo") {
+          out.paralelo = v;
+          out.fechaPar = (x.fechaActualizacion || "").slice(0, 10);
+        }
+      }
+    }
+  } catch {}
+  if (!out.bcv) {
+    try {
+      const r = await fetch("https://www.bcv.org.ve/", { headers: UA });
+      if (r.ok) {
+        const html = await r.text();
+        const m = html.match(/id="dolar"[\s\S]*?<strong[^>]*>\s*([\d.,]+)\s*<\/strong>/);
+        if (m) out.bcv = aNumero(m[1]);
+        const f = html.match(/Fecha\s*Valor[\s\S]*?content="(\d{4}-\d{2}-\d{2})/);
+        if (f) out.fechaBcv = f[1];
+      }
+    } catch {}
+  }
+  if (!out.fechaBcv) out.fechaBcv = hoyVET();
+  return out;
+}
+
+// IBC: la Bolsa de Caracas publica cada cierre como noticia con slug
+// "indice-bursatil-caracas-cerro-en-5-17361-puntos-23jul".
+async function fetchIbc() {
+  const out = { valor: null, fecha: "", previo: null, previoFecha: "" };
+  try {
+    const r = await fetch("https://www.bolsadecaracas.com/", { headers: UA });
+    if (!r.ok) return out;
+    const html = await r.text();
+    const re = /cerro-en-([0-9-]+)-puntos-(\d{1,2})([a-z]{3})/g;
+    const vistos = [];
+    let m;
+    while ((m = re.exec(html)) !== null) {
+      const valor = Number(m[1].replace(/-/g, "")) / 100;
+      const mes = MESES.indexOf(m[3]);
+      if (!valor || mes < 0) continue;
+      const anio = Number(hoyVET().slice(0, 4));
+      let iso =
+        anio + "-" + String(mes + 1).padStart(2, "0") + "-" + String(Number(m[2])).padStart(2, "0");
+      // Si la fecha cae en el futuro, el cierre es del año pasado (borde de enero).
+      if (iso > hoyVET()) iso = anio - 1 + iso.slice(4);
+      if (!vistos.some((v) => v.fecha === iso)) vistos.push({ fecha: iso, valor: valor });
+      if (vistos.length >= 6) break;
+    }
+    vistos.sort((a, b) => (a.fecha < b.fecha ? 1 : -1));
+    if (vistos[0]) {
+      out.valor = vistos[0].valor;
+      out.fecha = vistos[0].fecha;
+    }
+    if (vistos[1]) {
+      out.previo = vistos[1].valor;
+      out.previoFecha = vistos[1].fecha;
+    }
+  } catch {}
+  return out;
+}
+
+// Serie diaria de 1 año (Yahoo Finance). query2 es el respaldo de query1.
+async function yahooSerie(ticker) {
+  const path =
+    "/v8/finance/chart/" + encodeURIComponent(ticker) + "?interval=1d&range=1y";
+  for (const host of ["query1.finance.yahoo.com", "query2.finance.yahoo.com"]) {
+    try {
+      const r = await fetch("https://" + host + path, { headers: UA });
+      if (!r.ok) continue;
+      const j = await r.json();
+      const res = j.chart && j.chart.result && j.chart.result[0];
+      if (!res || !res.timestamp) continue;
+      const cierres = ((res.indicators.quote || [{}])[0] || {}).close || [];
+      const serie = [];
+      for (let i = 0; i < res.timestamp.length; i++) {
+        const c = cierres[i];
+        if (c === null || c === undefined) continue;
+        serie.push({ d: new Date(res.timestamp[i] * 1000).toISOString().slice(0, 10), c: c });
+      }
+      if (serie.length) return serie;
+    } catch {}
+  }
+  return [];
+}
+
+// Último cierre + variación semanal + variación en el año.
+function resumenSerie(serie) {
+  if (!serie || !serie.length) return null;
+  const ult = serie[serie.length - 1];
+  const limite = new Date(Date.parse(ult.d) - 7 * 86400000).toISOString().slice(0, 10);
+  let prev = null;
+  for (const p of serie) if (p.d <= limite) prev = p;
+  const base = serie.find((p) => p.d >= ult.d.slice(0, 4) + "-01-01");
+  return {
+    fecha: ult.d,
+    valor: ult.c,
+    sem: prev ? (ult.c / prev.c - 1) * 100 : null,
+    semFecha: prev ? prev.d : "",
+    ytd: base ? (ult.c / base.c - 1) * 100 : null,
+  };
+}
+
+// Variación contra el histórico propio de KV (para tasa BCV e IBC).
+function varDesdeHist(hist, valor, fecha, dias) {
+  const vacio = { pct: null, ref: null, refFecha: "" };
+  if (!valor || !hist) return vacio;
+  const limite = new Date(Date.parse(fecha) - dias * 86400000).toISOString().slice(0, 10);
+  const fechas = Object.keys(hist).sort();
+  let ref = "";
+  for (const k of fechas) if (k <= limite) ref = k;
+  if (!ref) {
+    // Todavía no hay un dato tan viejo: se usa el más antiguo que exista.
+    const antiguas = fechas.filter((k) => k < fecha);
+    if (!antiguas.length) return vacio;
+    ref = antiguas[0];
+  }
+  return { pct: (valor / hist[ref] - 1) * 100, ref: hist[ref], refFecha: ref };
+}
+
+// --- Recolección completa de cifras ---
+async function gatherEntornoData(env) {
+  const tareas = [
+    fetchTasas(),
+    fetchIbc(),
+    kvGet(env, "ipc", IPC_DEFAULT),
+    kvGet(env, "entorno:bases", BASES),
+    kvGet(env, "hist:bcv", SEED_BCV),
+    kvGet(env, "hist:par", {}),
+    kvGet(env, "hist:ibc", SEED_IBC),
+  ];
+  const res = await Promise.all(tareas.concat(YF_TICKERS.map((x) => yahooSerie(x.t))));
+  const [tasas, ibc, ipc, bases, histBcv, histPar, histIbc] = res;
+  const series = res.slice(tareas.length);
+
+  const mercados = {};
+  YF_TICKERS.forEach((x, i) => {
+    const r = resumenSerie(series[i]);
+    if (r) mercados[x.k] = Object.assign({ nombre: x.n, dec: x.dec }, r);
+  });
+  // Si Yahoo no respondió (pasa si bloquea la IP del Worker), usamos el último
+  // snapshot bueno y lo decimos en el texto.
+  let mercadosViejos = false;
+  if (!Object.keys(mercados).length) {
+    const snap = await kvGet(env, "mkt:last", null);
+    if (snap && snap.mercados) {
+      Object.assign(mercados, snap.mercados);
+      mercadosViejos = true;
+    }
+  } else {
+    await kvPut(env, "mkt:last", { ts: Date.now(), mercados: mercados });
+  }
+
+  const bcvSem = varDesdeHist(histBcv, tasas.bcv, tasas.fechaBcv, 6);
+  const parSem = varDesdeHist(histPar, tasas.paralelo, tasas.fechaPar || hoyVET(), 6);
+  const brecha =
+    tasas.bcv && tasas.paralelo ? (tasas.paralelo / tasas.bcv - 1) * 100 : null;
+  // Brecha de la semana pasada: solo si tenemos ambas puntas del histórico.
+  let brechaPrev = null;
+  if (bcvSem.ref && parSem.ref) brechaPrev = (parSem.ref / bcvSem.ref - 1) * 100;
+
+  const ibcSem = ibc.valor
+    ? varDesdeHist(histIbc, ibc.valor, ibc.fecha || hoyVET(), 6)
+    : { pct: null, ref: null, refFecha: "" };
+
+  return {
+    generado: new Date().toISOString(),
+    hoy: hoyVET(),
+    cambiario: {
+      bcv: tasas.bcv,
+      fechaBcv: tasas.fechaBcv,
+      bcvSem: bcvSem.pct,
+      bcvSemFecha: bcvSem.refFecha,
+      paralelo: tasas.paralelo,
+      fechaPar: tasas.fechaPar,
+      brecha: brecha,
+      brechaPrev: brechaPrev,
+      brechaDelta: brecha !== null && brechaPrev !== null ? brecha - brechaPrev : null,
+      devalYTD: tasas.bcv ? (tasas.bcv / bases.bcv - 1) * 100 : null,
+      baseAnual: bases.bcv,
+    },
+    inflacion: ipc,
+    mercados: mercados,
+    mercadosViejos: mercadosViejos,
+    ibc: {
+      valor: ibc.valor,
+      fecha: ibc.fecha,
+      sem: ibcSem.pct,
+      semFecha: ibcSem.refFecha,
+      ytd: ibc.valor ? (ibc.valor / bases.ibc - 1) * 100 : null,
+      baseAnual: bases.ibc,
+    },
+  };
+}
+
+// --- Bloque "Economía en cifras" (HTML, armado por código) ---
+function bloqueCifras(d) {
+  const c = d.cambiario;
+  const m = d.mercados;
+  const L = [];
+  const linea = (nombre, k, unidad, sufijo) => {
+    const x = m[k];
+    if (!x) return "• " + nombre + ": s/d";
+    return (
+      "• " + nombre + ": " + (unidad || "") + num(x.valor, x.dec === 0 ? 0 : 2) +
+      (sufijo || "") + "  (" + pct(x.sem) + " sem. | " + pct(x.ytd) + " año)"
+    );
+  };
+
+  L.push("<b>📊 ECONOMÍA EN CIFRAS</b>");
+  L.push("");
+  L.push("<b>Mercado cambiario</b>");
+  L.push(
+    "• Tasa BCV: Bs. " + num(c.bcv, 2) + "/US$" +
+      (c.fechaBcv ? " (" + fechaCorta(c.fechaBcv) + ")" : "") +
+      (c.bcvSem !== null ? "  " + pct(c.bcvSem, 2) + " sem." : "")
+  );
+  L.push(
+    "• Tasa paralelo: Bs. " + num(c.paralelo, 2) + "/US$" +
+      (c.fechaPar ? " (" + fechaCorta(c.fechaPar) + ")" : "")
+  );
+  L.push(
+    "• Brecha: " + (c.brecha === null ? "s/d" : num(c.brecha, 1) + "%") +
+      (c.brechaDelta !== null
+        ? "  (" + pct(c.brechaDelta, 1) + " pp vs. semana previa)"
+        : "")
+  );
+  L.push(
+    "• Devaluación acumulada del año: " + pct(c.devalYTD, 1) +
+      " (desde Bs. " + num(c.baseAnual, 2) + " el 1-ene)"
+  );
+  L.push("");
+  L.push("<b>Inflación y precios</b>");
+  L.push("• Inflación acumulada del año: " + num(d.inflacion.acumulada, 1) + "%");
+  L.push(
+    "• IPC mensual (" + escapeHtml(d.inflacion.mes) + "): " +
+      pct(d.inflacion.mensual, 1)
+  );
+  L.push("");
+  L.push("<b>Commodities</b>");
+  L.push(linea("Petróleo Brent", "brent", "US$ ", "/barril"));
+  L.push(linea("Oro", "oro", "US$ ", "/onza"));
+  L.push("");
+  L.push("<b>Criptoactivos</b>");
+  L.push(linea("Bitcoin (BTC/USD)", "btc", "US$ "));
+  L.push(linea("Ethereum (ETH/USD)", "eth", "US$ "));
+  L.push("");
+  L.push("<b>Mercado bursátil</b>");
+  L.push(linea("Dow Jones", "dow"));
+  L.push(linea("S&amp;P 500", "sp500"));
+  L.push(linea("Nasdaq", "nasdaq"));
+  L.push(
+    "• Bolsa de Valores de Caracas (IBC): " + num(d.ibc.valor, 2) +
+      (d.ibc.fecha ? " (" + fechaCorta(d.ibc.fecha) + ")" : "") +
+      "  (" + pct(d.ibc.sem) + " sem. | " + pct(d.ibc.ytd) + " año)"
+  );
+  const fechasMkt = Object.keys(m)
+    .map((k) => m[k].fecha)
+    .filter(Boolean)
+    .sort();
+  if (fechasMkt.length) {
+    L.push("");
+    L.push(
+      "<i>Último cierre disponible: " + fechaCorta(fechasMkt[fechasMkt.length - 1]) +
+        (d.mercadosViejos ? " (snapshot guardado; Yahoo no respondió)" : "") + ".</i>"
+    );
+  }
+  return L.join("\n");
+}
+
+// --- Prompt: la IA solo redacta; las cifras ya están calculadas ---
+function resumenDatosParaIA(d) {
+  const c = d.cambiario;
+  const m = d.mercados;
+  const l = [];
+  l.push("Tasa BCV: Bs. " + num(c.bcv, 2) + " por US$ (" + c.fechaBcv + "), " + pct(c.bcvSem, 2) + " en la semana.");
+  l.push("Paralelo: Bs. " + num(c.paralelo, 2) + ". Brecha: " + num(c.brecha, 1) + "%" +
+    (c.brechaDelta !== null ? " (" + pct(c.brechaDelta, 1) + " pp vs. semana previa)" : "") + ".");
+  l.push("Devaluación acumulada 2026: " + pct(c.devalYTD, 1) + " (base Bs. " + num(c.baseAnual, 2) + ").");
+  l.push("IPC " + d.inflacion.mes + ": " + pct(d.inflacion.mensual, 1) + " mensual; acumulada del año " + num(d.inflacion.acumulada, 1) + "%.");
+  for (const k of Object.keys(m)) {
+    const x = m[k];
+    l.push(x.nombre + ": " + num(x.valor, x.dec === 0 ? 0 : 2) + " (" + x.fecha + "), " +
+      pct(x.sem) + " semanal, " + pct(x.ytd) + " en el año.");
+  }
+  l.push("IBC Caracas: " + num(d.ibc.valor, 2) + " (" + d.ibc.fecha + "), " + pct(d.ibc.sem) +
+    " semanal, " + pct(d.ibc.ytd) + " en el año.");
+  return l.join("\n");
+}
+
+// Google News pega " - Medio" al final del título. Hay que separarlo: si se
+// evalúa el título completo, un medio como "Financial Times" cuela cualquier
+// titular por la palabra "Financia".
+function sinMedio(t) {
+  return String(t || "").replace(/\s-\s[^-]{2,40}$/, "");
+}
+function medioDe(t) {
+  const m = String(t || "").match(/\s-\s([^-]{2,40})$/);
+  return m ? m[1].trim() : "";
+}
+
+// Descarta clickbait y, en los feeds generalistas, exige señal económica.
+// Además saca lo que tenga más de 12 días: esto es un semanal, no un archivo.
+function filtrarNoticias(lista, exigirEcon) {
+  const corte = Date.now() - 12 * 86400000;
+  return lista.filter((n) => {
+    const t = n.t || "";
+    if (!t) return false;
+    if (JUNK_RE.test(t)) return false;
+    const titular = sinMedio(t);
+    if (CLICKBAIT_RE.test(titular)) return false;
+    if (exigirEcon && !ECON_RE.test(titular)) return false;
+    const ts = Date.parse(n.d || "");
+    if (ts && ts < corte) return false;
+    return true;
+  });
+}
+
+// Puntaje de relevancia: en vez de pasa/no pasa, ordena por señal. Premia hecho
+// macro duro, cifras, medio reconocido, resumen disponible y frescura.
+function puntuar(n) {
+  const titular = sinMedio(n.t || "");
+  let p = 0;
+  if (MEDIOS_OK_RE.test(n.t + " " + (n.l || ""))) p += 3;
+  if (MACRO_FUERTE_RE.test(titular)) p += 3;
+  if (ECON_RE.test(titular)) p += 1;
+  if (/\d/.test(titular)) p += 1;
+  if (/(\d+[.,]?\d*\s?%|US\$|\$\s?\d|millones|billones|mil millones)/i.test(titular)) p += 2;
+  if (resumenUtil(n)) p += 1;
+  const dias = n.d ? (Date.now() - Date.parse(n.d)) / 86400000 : NaN;
+  if (isNaN(dias)) p += 0;
+  else if (dias <= 2) p += 3;
+  else if (dias <= 5) p += 2;
+  else if (dias <= 8) p += 1;
+  else p -= 1;
+  return p;
+}
+
+// Google News repite el titular dentro de <description>: eso no aporta nada.
+// Solo cuenta como resumen si añade texto propio.
+function resumenUtil(n) {
+  const s = (n.s || "").trim();
+  if (s.length < 60) return "";
+  const t = sinMedio(n.t || "").toLowerCase();
+  if (t.includes(s.toLowerCase().slice(0, 40))) return "";
+  return s;
+}
+
+function paisDe(n) {
+  const t = (n.t || "") + " " + (n.s || "");
+  for (const par of PAISES) if (par[1].test(t)) return par[0];
+  return "";
+}
+
+// Quita la misma noticia contada por varios medios (compara palabras del
+// titular, no la URL: el link siempre es distinto).
+function dedupTitulos(lista) {
+  const out = [];
+  const bolsas = [];
+  for (const n of lista) {
+    const w = new Set(
+      sinMedio(n.t || "")
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/[^a-z0-9 ]/g, " ")
+        .split(/\s+/)
+        .filter((x) => x.length > 3)
+    );
+    let dup = false;
+    for (const w2 of bolsas) {
+      let inter = 0;
+      for (const x of w) if (w2.has(x)) inter++;
+      const union = w.size + w2.size - inter;
+      if (union && inter / union > 0.5) {
+        dup = true;
+        break;
+      }
+    }
+    if (!dup) {
+      bolsas.push(w);
+      out.push(n);
+    }
+  }
+  return out;
+}
+
+// Arma la lista final con cupos: Venezuela para la nota principal, Latam con
+// máximo 2 por país (si no, una semana argentina se come la sección) y algo de
+// contexto global.
+function seleccionarNoticias(cands) {
+  const porPuntaje = (a, b) => b._p - a._p;
+  for (const n of cands) n._p = puntuar(n);
+  const vz = cands.filter((n) => n.g === "VZ").sort(porPuntaje).slice(0, 10);
+  const glob = cands.filter((n) => n.g === "GLOBAL").sort(porPuntaje).slice(0, 5);
+  const cuenta = {};
+  const latam = [];
+  for (const n of cands.filter((n) => n.g === "LATAM").sort(porPuntaje)) {
+    const p = paisDe(n) || "región";
+    cuenta[p] = (cuenta[p] || 0) + 1;
+    if (cuenta[p] <= 2) latam.push(Object.assign({}, n, { p: p }));
+    if (latam.length >= 14) break;
+  }
+  return dedupTitulos([].concat(vz, latam, glob));
+}
+
+// Marca de dónde viene cada titular: le dice al modelo qué usar para la noticia
+// principal (VZ) y qué para Latam enlatada (LATAM).
+function etiquetar(lista, g) {
+  return lista.map((n) => Object.assign({}, n, { g: g }));
+}
+
+function promptEntorno(d, noticias) {
+  // A las mejores puntuadas se les pasa el resumen del feed: con eso el modelo
+  // redacta con detalle real en vez de rellenar con generalidades.
+  const lista = noticias
+    .map((n, i) => {
+      const etq = (n.g || "OTRO") + (n.p ? "/" + n.p : "");
+      const medio = medioDe(n.t) || "";
+      const cab =
+        `${i + 1}. [${etq}] ${sinMedio(n.t)}` +
+        (medio ? ` (medio: ${medio})` : "") +
+        (n.d ? ` (${n.d})` : "");
+      const res = i < 14 ? resumenUtil(n) : "";
+      return res ? cab + "\n   → " + res : cab;
+    })
+    .join("\n");
+  return (
+    "Actúa como analista financiero y periodista económico senior especializado en " +
+    "el mercado venezolano y latinoamericano. Redactas la edición semanal de " +
+    "ENTORNO EN VIÑETAS, un newsletter ejecutivo de economía y finanzas.\n" +
+    "HOY ES " + fechaLarga(d.hoy) + ".\n\n" +
+    "ESTILO: directo, técnico, profesional pero ágil y fácil de leer. Sintético: " +
+    "cada bloque debe caber en una página de diagramación. Español de Venezuela.\n\n" +
+    "REGLAS DURAS:\n" +
+    "- NO inventes cifras. Solo puedes citar números que aparezcan en DATOS o en " +
+    "los TITULARES de abajo. Si no tienes un dato, no lo menciones.\n" +
+    "- No repitas la tabla de cifras: ese bloque lo arma el sistema aparte.\n" +
+    "- ESCRIBE TODO EN ESPAÑOL, sin una sola palabra en inglés. Si el titular " +
+    "original está en inglés, traduce y reescribe con tus palabras; nunca copies " +
+    "un titular tal cual.\n" +
+    "- Solo temas macroeconómicos, financieros o de negocios (bancos centrales, " +
+    "tasas, inflación, PIB, deuda, fiscal, comercio, empresas, M&A, commodities, " +
+    "energía, banca). NADA de migración, visas, clima, deportes, farándula ni " +
+    "estilo de vida, aunque aparezca en los titulares.\n" +
+    "- No menciones días de la semana ni 'hoy/ayer' salvo que la fecha esté en los " +
+    "datos o en el titular que usas.\n" +
+    "- Texto plano, sin markdown, sin asteriscos, sin viñetas dentro de los " +
+    "párrafos.\n" +
+    "- Respeta EXACTAMENTE los marcadores ### del formato. Nada fuera de ellos.\n\n" +
+    "FORMATO EXACTO DE SALIDA:\n" +
+    "###CONTRAPORTADA\n" +
+    "Un solo párrafo de máximo 4 líneas que condense los temas centrales de esta " +
+    "edición y funcione como gancho. Debe mencionar al menos dos hechos concretos " +
+    "(con cifra o nombre propio), no generalidades.\n" +
+    "###NICHO\n" +
+    "El país o temática de la noticia principal, en mayúsculas, formato " +
+    "VENEZUELA / MACROECONOMÍA o VENEZUELA / FINANZAS.\n" +
+    "###TITULAR\n" +
+    "Titular conciso y directo, una sola línea.\n" +
+    "###SUBTITULO\n" +
+    "Subtítulo ligeramente llamativo (amarillista pero con rigor técnico, sin " +
+    "desinformar), una sola línea, que insinúe la consecuencia o el riesgo.\n" +
+    "###CUERPO\n" +
+    "Exactamente 3 párrafos cortos separados por una línea en blanco: (1) el hecho " +
+    "y sus cifras, (2) su impacto, (3) perspectiva estratégica.\n" +
+    "###LATAM\n" +
+    "Exactamente 4 ítems de países DISTINTOS de América Latina, separados por una " +
+    "línea con tres guiones (---). Cada ítem: primera línea 'PAÍS — Titular en " +
+    "español' (sin punto final); siguiente línea, un sumario de máximo 3 líneas " +
+    "que NO empiece repitiendo el nombre del país. No incluyas Venezuela aquí (ya " +
+    "va en la noticia principal).\n\n" +
+    "CÓMO ELEGIR:\n" +
+    "- Prefiere hechos con cifra, decisión de política económica u operación " +
+    "concreta (emisión, crédito, adquisición, dato oficial). Evita declaraciones, " +
+    "polémicas verbales y peleas políticas sin efecto económico medible.\n" +
+    "- La noticia principal debe apoyarse en un HECHO concreto de los titulares " +
+    "marcados [VZ] (una decisión, una cifra publicada, una operación, un anuncio) " +
+    "y usar las cifras del cuadro como soporte. No escribas una nota que sea solo " +
+    "la lectura de la tabla.\n" +
+    "- Los 4 ítems de Latam salen de los titulares marcados [LATAM] o [GLOBAL] con " +
+    "efecto en la región. Si un país no tiene noticia económica útil, usa otro.\n\n" +
+    "DATOS DUROS (calculados por el sistema, son la verdad):\n" +
+    resumenDatosParaIA(d) +
+    "\n\nTITULARES RECIENTES. La línea que empieza con '→' es el resumen de esa " +
+    "noticia: úsalo para dar detalle concreto. Si un dato no está en el titular " +
+    "ni en su resumen, NO lo afirmes.\n" +
+    lista +
+    "\n\nEscribe ahora la edición."
+  );
+}
+
+function parseSecciones(txt) {
+  const out = {};
+  const re = /###\s*(CONTRAPORTADA|NICHO|TITULAR|SUBTITULO|CUERPO|LATAM)\s*\n?/gi;
+  const marcas = [];
+  let m;
+  while ((m = re.exec(txt)) !== null) {
+    marcas.push({ k: m[1].toUpperCase(), i: m.index, fin: re.lastIndex });
+  }
+  for (let i = 0; i < marcas.length; i++) {
+    const hasta = i + 1 < marcas.length ? marcas[i + 1].i : txt.length;
+    out[marcas[i].k] = txt.slice(marcas[i].fin, hasta).trim();
+  }
+  return out;
+}
+
+// --- Armado de la edición ---
+async function buildEntorno(env) {
+  const [datos, gVz, gLatam, gGlobal, tVz, tLatam, guardadas] = await Promise.all([
+    gatherEntornoData(env),
+    fetchNews(ENTORNO_Q_VZ, 12),
+    fetchNews(ENTORNO_Q_LATAM, 12),
+    fetchNews(ENTORNO_Q_GLOBAL, 8),
+    fetchWebNews(env, "Venezuela economía dólar inflación petróleo esta semana", 6),
+    fetchWebNews(env, "América Latina economía banco central empresas esta semana", 6),
+    kvGet(env, "articles", []),
+  ]);
+  // Curadas (queries económicas) + historial de KV, que sí exige señal económica
+  // porque viene de feeds generalistas. Los [VZ] van primero para que el modelo
+  // los tenga a la vista al elegir la noticia principal.
+  const curadas = filtrarNoticias(
+    [].concat(
+      etiquetar(gVz, "VZ"),
+      etiquetar(tVz, "VZ"),
+      etiquetar(gLatam, "LATAM"),
+      etiquetar(tLatam, "LATAM"),
+      etiquetar(gGlobal, "GLOBAL")
+    ),
+    true
+  );
+  const delHistorial = filtrarNoticias(
+    etiquetar(guardadas.slice(0, 60), "LATAM").map((n) =>
+      /venezuela|bcv|pdvsa|bol[íi]var|caracas/i.test(n.t) ? Object.assign(n, { g: "VZ" }) : n
+    ),
+    true
+  );
+  const noticias = seleccionarNoticias(mergeNews(curadas, delHistorial, 120));
+
+  const crudo = await aiEntorno(env, promptEntorno(datos, noticias));
+  const s = parseSecciones(crudo);
+  const cabecera =
+    "📰 <b>ENTORNO EN VIÑETAS</b> — Resumen semanal\n" +
+    "<i>" + fechaLarga(datos.hoy) + " · Sureconomics</i>";
+
+  const partes = [];
+  if (s.CONTRAPORTADA && s.CUERPO) {
+    partes.push(
+      cabecera + "\n\n<b>CONTRAPORTADA</b>\n" + escapeHtml(s.CONTRAPORTADA) + "\n\n" +
+        "<b>" + escapeHtml(s.NICHO || "VENEZUELA") + "</b>\n" +
+        "<b>" + escapeHtml(s.TITULAR || "") + "</b>\n" +
+        "<i>" + escapeHtml(s.SUBTITULO || "") + "</i>\n\n" +
+        escapeHtml(s.CUERPO)
+    );
+  } else {
+    // Si el modelo no respetó los marcadores, mandamos su texto tal cual: es
+    // mejor una edición imperfecta que ninguna.
+    partes.push(cabecera + "\n\n" + escapeHtml(crudo));
+  }
+  partes.push(bloqueCifras(datos));
+  if (s.LATAM) {
+    const items = s.LATAM.split(/\n?-{3,}\n?/)
+      .map((x) => x.trim())
+      .filter(Boolean)
+      .map((x) => {
+        const lin = x.split("\n");
+        return "<b>" + escapeHtml(lin[0]) + "</b>\n" + escapeHtml(lin.slice(1).join("\n").trim());
+      });
+    partes.push("<b>🌎 LATAM ENLATADA</b>\n\n" + items.join("\n\n") + "\n\n" + bloqueFuentes(noticias));
+  } else {
+    partes.push(bloqueFuentes(noticias));
+  }
+
+  return { ts: Date.now(), fecha: datos.hoy, parts: partes, datos: datos };
+}
+
+function bloqueFuentes(noticias) {
+  const links = noticias
+    .filter((n) => n.l)
+    .slice(0, 5)
+    .map((n) => '• <a href="' + escapeHtml(n.l) + '">' + escapeHtml(n.t) + "</a>")
+    .join("\n");
+  return (
+    "<b>Fuentes de datos</b>\n" +
+    "<i>BCV / ve.dolarapi.com (tasas), Bolsa de Valores de Caracas (IBC), " +
+    "Yahoo Finance (índices, commodities, cripto).</i>" +
+    (links ? "\n\n<b>Titulares usados</b>\n" + links : "")
+  );
+}
+
+// Caché de 6 h: dos pedidos seguidos no queman cuota de IA ni cambian el texto.
+async function getEntorno(env, force) {
+  const cache = await kvGet(env, "entorno:last", null);
+  if (!force && cache && cache.parts && Date.now() - cache.ts < ENTORNO_TTL * 1000) {
+    return cache;
+  }
+  try {
+    const ed = await buildEntorno(env);
+    await kvPut(env, "entorno:last", ed);
+    return ed;
+  } catch (e) {
+    if (cache && cache.parts) return Object.assign({}, cache, { degradado: true });
+    throw e;
+  }
+}
+
+async function enviarEntorno(env, chatId, force) {
+  await sendMessage(env, chatId, "📰 Armando el Entorno en Viñetas… dame unos segundos.");
+  let ed;
+  try {
+    ed = await getEntorno(env, force);
+  } catch (e) {
+    await sendMessage(
+      env,
+      chatId,
+      "No pude armar el newsletter ahora mismo (falló la IA o una fuente de datos). " +
+        "Intenta de nuevo en unos minutos."
+    );
+    return;
+  }
+  const edad = Date.now() - ed.ts;
+  if (ed.degradado || edad > ENTORNO_MAX_EDAD) {
+    await sendMessage(
+      env,
+      chatId,
+      "⚠️ Te mando la última edición disponible (" + fechaLarga(ed.fecha) + "). " +
+        "No pude regenerarla con datos de hoy."
+    );
+  }
+  for (const p of ed.parts) await sendHtml(env, chatId, p);
+}
+
+// IA para el newsletter. A diferencia del chat, aquí se prueba PRIMERO el modelo
+// grande: es una sola llamada por semana y la redacción es lo que se publica.
+async function aiEntorno(env, prompt) {
+  for (const model of GEMINI_MODELS.slice().reverse()) {
+    try {
+      return await callGemini(env, model, prompt);
+    } catch (e) {}
+  }
+  if (env.GROQ_API_KEY) return await callGroq(env, prompt);
+  throw new Error("no AI available");
+}
+
+function esPedidoEntorno(t) {
+  const s = t.toLowerCase();
+  if (/^\/entorno\b/.test(s)) return true;
+  if (/vi[ñn]etas/.test(s)) return true;
+  if (/\bentorno\b/.test(s) &&
+      /(dame|env[íi]a|manda|mu[ée]strame|quiero|arma|genera|resumen|newsletter|bolet[íi]n)/.test(s))
+    return true;
+  if (/(newsletter|bolet[íi]n|informe)\s+(semanal|de la semana)/.test(s)) return true;
+  return false;
+}
+
+// El IPC lo publica el BCV una vez al mes y no hay API: se actualiza a mano.
+// Uso: "/ipc 13,8 129,8 junio 2026"  (mensual, acumulada, mes)
+async function comandoIpc(env, chatId, text) {
+  const cuerpo = text.slice(4).trim();
+  const re = /-?\d+(?:[.,]\d+)?/g;
+  const nums = cuerpo.match(re) || [];
+  if (nums.length < 2) {
+    const ipc = await kvGet(env, "ipc", IPC_DEFAULT);
+    await sendMessage(
+      env,
+      chatId,
+      "IPC guardado: " + ipc.mes + " — " + num(ipc.mensual, 1) + "% mensual, " +
+        num(ipc.acumulada, 1) + "% acumulado.\n\n" +
+        "Para actualizarlo: /ipc 13,8 129,8 junio 2026\n" +
+        "(primero el mensual, luego el acumulado del año, luego el mes)"
+    );
+    return;
+  }
+  let quitados = 0;
+  const mes = cuerpo
+    .replace(re, (m2) => (quitados++ < 2 ? " " : m2))
+    .replace(/%/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const ipc = {
+    mes: mes || "último mes",
+    mensual: parseFloat(nums[0].replace(",", ".")),
+    acumulada: parseFloat(nums[1].replace(",", ".")),
+    ts: Date.now(),
+  };
+  await kvPut(env, "ipc", ipc);
+  await sendMessage(
+    env,
+    chatId,
+    "✅ IPC actualizado: " + ipc.mes + " — " + num(ipc.mensual, 1) + "% mensual, " +
+      num(ipc.acumulada, 1) + "% acumulado del año.\n" +
+      "La próxima edición del Entorno en Viñetas lo usará."
+  );
+}
+
+function escapeHtml(s) {
+  return String(s === null || s === undefined ? "" : s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
 // --- Telegram ---
 async function sendMessage(env, chatId, text) {
   const limit = 4000;
@@ -416,5 +1352,37 @@ async function sendMessage(env, chatId, text) {
         disable_web_page_preview: true,
       }),
     });
+  }
+}
+
+// Igual que sendMessage pero con parse_mode HTML (negritas del newsletter).
+// Corta en saltos de línea para no partir una etiqueta por la mitad.
+async function sendHtml(env, chatId, html) {
+  const limit = 3800;
+  const bloques = [];
+  let actual = "";
+  for (const linea of html.split("\n")) {
+    if (actual && actual.length + linea.length + 1 > limit) {
+      bloques.push(actual);
+      actual = linea;
+    } else {
+      actual = actual ? actual + "\n" + linea : linea;
+    }
+  }
+  if (actual) bloques.push(actual);
+  for (const b of bloques) {
+    const r = await fetch("https://api.telegram.org/bot" + env.TELEGRAM_TOKEN + "/sendMessage", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text: b,
+        parse_mode: "HTML",
+        disable_web_page_preview: true,
+      }),
+    });
+    // Si Telegram rechaza el HTML, reintentamos en texto plano para no perder
+    // la edición completa por una etiqueta mal formada.
+    if (!r.ok) await sendMessage(env, chatId, b.replace(/<[^>]+>/g, ""));
   }
 }

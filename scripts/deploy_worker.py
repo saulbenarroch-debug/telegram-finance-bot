@@ -19,7 +19,10 @@ ENV_PATH = os.path.join(BASE, ".env")
 WORKER_JS = os.path.join(BASE, "cloudflare-worker", "worker.js")
 NAME = "sureconomics-bot"
 KV_TITLE = "sureconomics-kv"
-CRON = "0 */3 * * *"  # cada 3 horas: ingiere noticias al historial
+CRONS = [
+    "0 */3 * * *",  # cada 3 horas: ingiere noticias, tasa BCV e IBC al historial
+    "0 12 * * 5",   # viernes 12:00 UTC = 8:00 a.m. VET: prearma "Entorno en Vinetas"
+]
 
 load_dotenv(ENV_PATH)
 CF_TOKEN = os.environ["CLOUDFLARE_API_TOKEN"].strip()
@@ -97,14 +100,14 @@ def main():
         timeout=30,
     )
 
-    # Cron para ingerir noticias.
+    # Crons: ingesta cada 3 h + armado del newsletter semanal (viernes 8:00 VET).
     r = requests.put(
         f"{API}/accounts/{CF_ACCT}/workers/scripts/{NAME}/schedules",
         headers=H,
-        json=[{"cron": CRON}],
+        json=[{"cron": c} for c in CRONS],
         timeout=30,
     )
-    print("[ok] cron:", r.status_code, r.json().get("success"))
+    print("[ok] crons:", r.status_code, r.json().get("success"), CRONS)
 
     # Webhook de Telegram.
     url = f"https://{NAME}.{sub}.workers.dev"
