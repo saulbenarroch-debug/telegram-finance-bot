@@ -74,6 +74,9 @@ const WELCOME =
 // este código a partir de fuentes duras; la IA solo redacta la prosa.
 // ---------------------------------------------------------------------------
 const ENTORNO_CRON = "0 12 * * 5"; // viernes 12:00 UTC = 8:00 a.m. VET
+// Repo donde vive el workflow que dibuja las laminas (Chrome headless no corre
+// en un Worker, asi que el render se delega a GitHub Actions).
+const GITHUB_REPO = "saulbenarroch-debug/telegram-finance-bot";
 const ENTORNO_TTL = 6 * 60 * 60; // seg. que se reusa una edición ya armada
 const ENTORNO_MAX_EDAD = 8 * 24 * 60 * 60 * 1000; // ms antes de avisar que está vieja
 
@@ -1353,6 +1356,43 @@ async function enviarEntorno(env, chatId, force) {
     );
   }
   for (const p of ed.parts) await sendHtml(env, chatId, p);
+
+  // Las laminas con el diseno las dibuja GitHub Actions y las manda al mismo
+  // chat que las pidio. Si no hay token configurado, el texto ya salio y no se
+  // menciona nada: el newsletter no depende del render.
+  if (env.GITHUB_PAT) {
+    const ok = await dispararLaminas(env, chatId);
+    await sendMessage(
+      env,
+      chatId,
+      ok
+        ? "🎨 Armando las láminas con la plantilla; llegan en un par de minutos."
+        : "⚠️ El texto salió, pero no pude disparar el render de las láminas."
+    );
+  }
+}
+
+// Dispara el workflow "Entorno en Vinetas" pasandole el chat que lo pidio.
+async function dispararLaminas(env, chatId) {
+  try {
+    const r = await fetch(
+      "https://api.github.com/repos/" + GITHUB_REPO + "/actions/workflows/entorno.yml/dispatches",
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer " + env.GITHUB_PAT,
+          Accept: "application/vnd.github+json",
+          "X-GitHub-Api-Version": "2022-11-28",
+          "User-Agent": "sureconomics-bot",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ ref: "main", inputs: { chat: String(chatId) } }),
+      }
+    );
+    return r.status === 204; // GitHub responde 204 sin cuerpo cuando acepta
+  } catch {
+    return false;
+  }
 }
 
 // IA para el newsletter. A diferencia del chat, aquí se prueba PRIMERO el modelo
