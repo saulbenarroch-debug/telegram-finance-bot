@@ -9,6 +9,7 @@ via GitHub Actions o el Programador de tareas de Windows.
 import html
 import os
 import re
+import socket
 import time
 import urllib.parse
 from datetime import datetime, timedelta, timezone
@@ -19,6 +20,10 @@ from dotenv import load_dotenv
 from google import genai
 
 load_dotenv()
+
+# Tiempo limite global de red: feedparser/urllib NO traen timeout y una fuente
+# que deja la conexion colgada trababa el proceso ~15 min (regla de oro #3).
+socket.setdefaulttimeout(25)
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "").strip()
 CHAT_ID = os.environ.get("CHAT_ID", "").strip()

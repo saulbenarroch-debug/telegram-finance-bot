@@ -126,6 +126,10 @@ Sin Python global en Windows: hay un runtime portátil en `.pyruntime/`
 8. **Fuentes que no responden** (403/TLS desde fuera): bancaynegocios,
    finanzasdigital, lapatilla, eleconomista.com.mx, portafolio.co, y el feed de
    sección de El Cronista (404). No las vuelvas a agregar sin verificar.
+9. **Feedparser/urllib NO traen timeout:** una fuente que acepta la conexión y
+   luego **no responde** (no un 403, un cuelgue) trababa el job ~15 min y lo
+   hacía fallar. `bot.py` fija `socket.setdefaulttimeout(25)` y los workflows
+   tienen `timeout-minutes`. No quites ninguno de los dos.
 
 ## Vencimientos y mantenimiento
 
