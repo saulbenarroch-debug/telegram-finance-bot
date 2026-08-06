@@ -40,18 +40,17 @@ jobs:
 
       - name: Guardar estado (evitar alertas repetidas)
         continue-on-error: true   # guardar el estado no es critico: nunca debe tumbar el workflow
+        timeout-minutes: 2        # si git se cuelga, se corta rapido (no 15 min)
+        env:
+          GIT_TERMINAL_PROMPT: "0"  # git nunca se cuelga pidiendo credenciales por consola
         run: |
           if [ -n "$(git status --porcelain breaking_state.json)" ]; then
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
             git add breaking_state.json
             git commit -m "Actualizar estado de alertas [skip ci]"
-            # Reintenta incorporando cambios remotos antes de subir (evita conflictos).
-            for i in 1 2 3; do
-              git pull --rebase --autostash origin main && git push origin main && break
-              echo "push falló, reintento $i..."
-              sleep 3
-            done || echo "No se pudo guardar el estado (no crítico); se seguirá."
+            git pull --rebase --autostash origin main || git rebase --abort 2>/dev/null || true
+            git push origin main || echo "No se pudo guardar el estado (no crítico); se reintenta luego."
           else
             echo "Sin cambios en el estado; nada que guardar."
           fi
