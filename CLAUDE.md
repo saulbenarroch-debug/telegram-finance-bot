@@ -130,6 +130,12 @@ Sin Python global en Windows: hay un runtime portátil en `.pyruntime/`
    luego **no responde** (no un 403, un cuelgue) trababa el job ~15 min y lo
    hacía fallar. `bot.py` fija `socket.setdefaulttimeout(25)` y los workflows
    tienen `timeout-minutes`. No quites ninguno de los dos.
+10. **"The job was not acquired by Runner" + "Internal server error" NO es bug
+    del código:** es GitHub que no asigna runner, casi siempre por **minutos de
+    Actions agotados** (repo privado = 2.000 min/mes gratis; con presupuesto $0 y
+    "stop usage" se bloquean las corridas). La corrida dura ~15 min "intentando"
+    y falla. **El repo es PÚBLICO** justo por esto: Actions gratis e ilimitado.
+    Antes de diagnosticar el código, revisa Billing → Actions.
 
 ## Vencimientos y mantenimiento
 
