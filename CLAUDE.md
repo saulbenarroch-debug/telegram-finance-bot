@@ -45,8 +45,25 @@ Ver [docs/ARQUITECTURA.md](docs/ARQUITECTURA.md) para el detalle de cada uno.
 
 ## Voz editorial (Sureconomics)
 
-Está codificada en `write_briefing()` (`bot.py`) y `promptEntorno()`
-(`worker.js`). Si tocas un prompt, respeta:
+**La voz del resumen 2x/día vive en `perfiles/bot-telegram.md`, no en el código.**
+`write_briefing()` la carga con `cargar_perfil()` y solo sustituye `{{turno}}` y
+`{{fecha}}`. Para cambiar la voz se edita ese archivo; no hay que abrir Python.
+
+Se sacó del código porque ahora hay **dos productos con voces distintas**: este
+bot (*pragmático y NO partidista*) y el medio **SurEconomics**
+(`C:\Users\saulb\sureconomics-medio`, línea *progresista sin extremos*, decisión
+del dueño). Mismo motor, perfiles separados: **cambiar la voz del medio no puede
+tocar la de este bot**. Si algún día se unifican, es una decisión editorial, no
+un efecto colateral de un refactor.
+
+- La sustitución usa `.replace()` con tokens `{{...}}` y **no** `str.format()`:
+  el perfil lo edita gente de edición y una llave suelta en el texto no puede
+  tumbar el bot.
+- `promptEntorno()` (`worker.js`) **todavía tiene su voz incrustada**. El Worker
+  es JS sin bundler y no puede leer un archivo del repo en ejecución; cuando se
+  migre, hay que inyectar el perfil al desplegar (`scripts/deploy_worker.py`).
+
+Si tocas un prompt, respeta:
 
 - **Primera persona plural** con criterio propio.
 - Cada tema = hechos + una línea **"Nuestra lectura:"** (EN: *"Our take:"*).

@@ -1,0 +1,99 @@
+# Comprueba si Groq responde DESDE GitHub Actions.
+#
+# Por que existe: Groq es el respaldo de IA de bot.py, breaking.py y del medio,
+# y nunca se ha probado en produccion porque solo se activa cuando Gemini falla.
+# Desde la maquina del dueño no se puede comprobar: hace falta VPN para trabajar
+# y Groq bloquea las IP de VPN. Aqui corre desde la IP real de produccion.
+#
+# Solo lectura: consulta la lista de modelos y una respuesta minima. No envia
+# nada a Telegram ni toca ningun estado.
+#
+# Se dispara a mano (Actions -> Comprobar Groq -> Run workflow). Sin `schedule:`,
+# igual que el resto de workflows del repo (regla de oro #4).
+
+name: Comprobar Groq
+
+on:
+  workflow_dispatch:
+
+jobs:
+  comprobar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Desde donde nos ve el mundo
+        run: |
+          curl -s https://ipinfo.io/json | head -c 400
+          echo
+
+      - name: Groq responde?
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        run: |
+          if [ -z "$GROQ_API_KEY" ]; then
+            echo "No hay secret GROQ_API_KEY en este repo."
+            exit 1
+          fi
+
+          # -w guarda el codigo aparte para no mezclarlo con el cuerpo.
+          codigo=$(curl -s -o /tmp/groq.json -w '%{http_code}' \
+            -H "Authorization: Bearer $GROQ_API_KEY" \
+            https://api.groq.com/openai/v1/models)
+
+          echo "GET /models -> HTTP $codigo"
+          case "$codigo" in
+            200)
+              echo "Groq FUNCIONA desde Actions. El respaldo es real."
+              echo "Modelos con 'llama' en el nombre:"
+              grep -o '"id":"[^"]*llama[^"]*"' /tmp/groq.json | sort -u || true
+              ;;
+            401)
+              echo "La clave no vale: hay que rotarla en Groq y actualizar el secret."
+              exit 1
+              ;;
+            403)
+              echo "Bloqueo por RED, no por clave. Groq NO sirve de respaldo aqui:"
+              head -c 300 /tmp/groq.json; echo
+              echo "Hay que sustituir el respaldo por otro proveedor."
+              exit 1
+              ;;
+            *)
+              echo "Respuesta inesperada:"; head -c 300 /tmp/groq.json; echo
+              exit 1
+              ;;
+          esac
+
+      - name: Y una generacion de verdad, no solo la lista
+        if: success()
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        run: |
+          # Listar modelos y generar texto son permisos distintos: uno puede
+          # pasar y el otro fallar por cuota o por modelo retirado.
+          codigo=$(curl -s -o /tmp/gen.json -w '%{http_code}' \
+            -X POST https://api.groq.com/openai/v1/chat/completions \
+            -H "Authorization: Bearer $GROQ_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d '{"model":"llama-3.3-70b-versatile","max_tokens":16,
+                 "messages":[{"role":"user","content":"Responde solo: OK"}]}')
+
+          echo "POST /chat/completions -> HTTP $codigo"
+          head -c 400 /tmp/gen.json; echo
+          [ "$codigo" = "200" ] || exit 1
+          echo "El respaldo genera texto. Confirmado de punta a punta."
+
+      - name: Qué clave de Gemini está usando este repo
+        if: always()
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          # Solo la huella, nunca la clave. Se compara con la que imprime
+          # comprobar.py en local: si coinciden, este repo ya migró.
+          if [ -z "$GEMINI_API_KEY" ]; then
+            echo "No hay secret GEMINI_API_KEY en este repo."
+          else
+            huella=$(printf '%s' "$GEMINI_API_KEY" | sha256sum | cut -c1-8)
+            echo "huella de la clave de Gemini en este repo: $huella"
+            echo "Compárala con la que imprime comprobar.py. Si no coinciden,"
+            echo "este repo sigue con la clave vieja."
+          fi

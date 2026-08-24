@@ -42,9 +42,14 @@ MAX_PER_CATEGORY = 6
 # Modelos de Gemini en orden de preferencia. Cada modelo tiene su propia cuota
 # gratuita diaria, asi que si uno se agota (429), probamos el siguiente
 # automaticamente. flash-lite primero (mas cuota); flash da mejor prosa de respaldo.
+# Los 2.5 dejaron de estar disponibles para proyectos NUEVOS: dan 404 con el
+# mensaje "no longer available to new users". La clave antigua los seguia usando
+# por herencia, asi que el fallo solo aparecio al migrar a la cuenta de la
+# empresa (24/08/2026). Si algun dia hay que crear otro proyecto, esto vuelve a
+# pasar: comprobar primero con client.models.list().
 GEMINI_MODELS = [
-    "gemini-2.5-flash-lite",  # mas cuota gratis; primera opcion
-    "gemini-2.5-flash",       # respaldo (cuota diaria separada)
+    "gemini-3.5-flash-lite",  # mas cuota gratis; primera opcion
+    "gemini-3.5-flash",       # respaldo (cuota diaria separada)
 ]
 
 # Modelo de Groq (respaldo gratis, API compatible con OpenAI).
@@ -286,44 +291,33 @@ def ai_generate(prompt, json_mode=False):
         raise
 
 
+def cargar_perfil(nombre):
+    """Lee un perfil editorial de perfiles/<nombre>.md.
+
+    La voz vive en un archivo y no en el codigo porque ahora hay dos productos
+    con voces distintas: este bot (pragmatico y NO partidista) y el medio
+    SurEconomics (linea progresista). Mismo motor, perfiles separados: cambiar
+    la voz de uno no puede tocar al otro. Ademas, asi la edita quien manda en
+    la voz sin abrir Python.
+    """
+    ruta = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        "perfiles", f"{nombre}.md")
+    with open(ruta, encoding="utf-8") as f:
+        return f.read()
+
+
 def write_briefing(by_category, turno, fecha):
     """Le pide a Gemini que redacte el resumen en español e ingles."""
     noticias = format_news_for_prompt(by_category)
 
-    prompt = (
-        "Escribes para Sureconomics: un servicio centrado en Venezuela y Suramérica "
-        "que promueve la inversión en la región con criterio propio. Con estos "
-        f"titulares (resumen {turno.lower()} del {fecha}, hora Venezuela), redacta "
-        "el briefing.\n\n"
-        "VOZ Y ESTILO (imítalo, es la marca de la casa):\n"
-        "- Primera persona plural y con criterio editorial: sintetiza los hechos y, "
-        "cuando aporte, cierra la sección con una línea 'Nuestra lectura:' (en "
-        "inglés 'Our take:') con análisis breve — qué significa, y los riesgos y "
-        "oportunidades de inversión para el sur.\n"
-        "- Pragmático y NO partidista: valora lo positivo para la economía de la "
-        "región venga de quien venga, y critica con honestidad las fragilidades "
-        "(dependencia petrolera, presión cambiaria, riesgo institucional, etc.).\n"
-        "- Pro-inversión en el sur, pero SIN tono publicitario y sin inventar datos "
-        "ni cifras que no estén en los titulares.\n\n"
-        "FORMATO:\n"
-        "- Escribe primero la versión en ESPAÑOL y luego la versión en INGLÉS, "
-        "separadas por una línea con '———'.\n"
-        "- EL CENTRO ES VENEZUELA Y SURAMÉRICA. Da más peso a las secciones "
-        "regionales (Suramérica: economía e inversión, M&A en Latinoamérica, "
-        "Economía venezolana). La sección 'Wall Street y global' va al FINAL, "
-        "breve, y en clave de qué significa para el inversor del sur. Omite una "
-        "sección si no tiene noticias.\n"
-        "- Por sección: 2 a 4 frases de síntesis y, cuando aporte, la línea de "
-        "'Nuestra lectura:'.\n"
-        "- En M&A enfócate en operaciones corporativas reales (fusiones, "
-        "adquisiciones, OPAs) en Latinoamérica.\n"
-        "- Usa <b>texto</b> de HTML para los títulos de sección (Telegram lo "
-        "renderiza). Sin enlaces, sin asteriscos ni '#'.\n\n"
-        f"NOTICIAS:\n{noticias}"
-    )
+    # Sustitucion por token literal en vez de str.format(): el perfil lo editan
+    # personas de edicion y una llave suelta en el texto no puede romper el bot.
+    voz = (cargar_perfil("bot-telegram")
+           .replace("{{turno}}", turno.lower())
+           .replace("{{fecha}}", fecha))
+    prompt = voz.rstrip() + f"\n\nNOTICIAS:\n{noticias}"
 
     return ai_generate(prompt).strip()
-
 
 def build_sources_block(by_category):
     """Lista los titulares como enlaces, agrupados por categoria."""
