@@ -44,8 +44,11 @@ jobs:
           case "$codigo" in
             200)
               echo "Groq FUNCIONA desde Actions. El respaldo es real."
-              echo "Modelos con 'llama' en el nombre:"
-              grep -o '"id":"[^"]*llama[^"]*"' /tmp/groq.json | sort -u || true
+              # Se listan TODOS: filtrar por 'llama' escondio que la familia
+              # llama-3.3 ya no existe y solo quedaban clasificadores de
+              # seguridad con esa palabra en el nombre.
+              echo "Modelos disponibles:"
+              grep -o '"id":"[^"]*"' /tmp/groq.json | sed 's/"id":"//;s/"//' | sort -u
               ;;
             401)
               echo "La clave no vale: hay que rotarla en Groq y actualizar el secret."
