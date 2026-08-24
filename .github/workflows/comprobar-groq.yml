@@ -66,6 +66,22 @@ jobs:
               ;;
           esac
 
+      - name: Probar los candidatos a respaldo
+        if: success()
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        run: |
+          # Listar modelos y generar texto son cosas distintas: uno puede pasar
+          # y el otro fallar por modelo retirado. Y el medio necesita ademas
+          # modo JSON, que no todos los modelos soportan.
+          for m in openai/gpt-oss-120b openai/gpt-oss-20b qwen/qwen3.6-27b; do
+            c=$(curl -s -o /tmp/g.json -w '%{http_code}'               -X POST https://api.groq.com/openai/v1/chat/completions               -H "Authorization: Bearer $GROQ_API_KEY" -H "Content-Type: application/json"               -d "{\"model\":\"$m\",\"max_tokens\":16,
+                   \"messages\":[{\"role\":\"user\",\"content\":\"Responde solo: OK\"}]}")
+            j=$(curl -s -o /tmp/j.json -w '%{http_code}'               -X POST https://api.groq.com/openai/v1/chat/completions               -H "Authorization: Bearer $GROQ_API_KEY" -H "Content-Type: application/json"               -d "{\"model\":\"$m\",\"max_tokens\":40,\"response_format\":{\"type\":\"json_object\"},
+                   \"messages\":[{\"role\":\"user\",\"content\":\"Devuelve {\\\"ok\\\":true} en JSON\"}]}")
+            echo "RESULTADO $m -> texto:$c json:$j"
+          done
+          echo "Fin de la prueba de candidatos."
       - name: Y una generacion de verdad, no solo la lista
         if: success()
         env:
