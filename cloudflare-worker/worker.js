@@ -5,7 +5,10 @@
 // Los 2.5 dan 404 en proyectos nuevos ("no longer available to new users").
 // Se descubrio al migrar la clave a la cuenta de la empresa (24/08/2026).
 const GEMINI_MODELS = ["gemini-3.5-flash-lite", "gemini-3.5-flash"];
-const GROQ_MODEL = "llama-3.3-70b-versatile";
+// Groq retiro la familia llama-3.3 (404 "does not exist"). El respaldo
+// llevaba tiempo roto sin que se notara, porque solo se activa cuando
+// Gemini falla. Comprobado el 24/08/2026 desde Actions.
+const GROQ_MODEL = "openai/gpt-oss-120b";
 const UA = { "User-Agent": "Mozilla/5.0 (compatible; SureconomicsBot/1.0)" };
 // Para bajar la portada de un medio hay que parecer navegador, no bot.
 const BROWSER_UA = {

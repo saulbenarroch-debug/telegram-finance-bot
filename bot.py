@@ -53,7 +53,10 @@ GEMINI_MODELS = [
 ]
 
 # Modelo de Groq (respaldo gratis, API compatible con OpenAI).
-GROQ_MODEL = "llama-3.3-70b-versatile"
+# Groq retiro la familia llama-3.3 (404 "does not exist"). El respaldo
+# llevaba tiempo roto sin que se notara, porque solo se activa cuando
+# Gemini falla. Comprobado el 24/08/2026 desde Actions.
+GROQ_MODEL = "openai/gpt-oss-120b"
 
 # User-Agent de navegador: algunas fuentes bloquean el agente por defecto.
 USER_AGENT = (
