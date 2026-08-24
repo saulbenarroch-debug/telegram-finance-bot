@@ -6,6 +6,7 @@ Telegram. Pensado para correr dos veces al dia (10:00 y 16:00 hora Venezuela)
 via GitHub Actions o el Programador de tareas de Windows.
 """
 
+import calendar
 import html
 import os
 import re
@@ -147,7 +148,13 @@ def entry_datetime(entry):
     parsed = entry.get("published_parsed") or entry.get("updated_parsed")
     if not parsed:
         return None
-    return datetime.fromtimestamp(time.mktime(parsed), tz=timezone.utc)
+    # OJO: timegm(), no mktime(). feedparser devuelve la fecha del feed ya en UTC
+    # como struct_time, pero mktime() la interpreta como hora LOCAL: en una maquina
+    # en Venezuela (UTC-4) desplazaba todo 4 horas y una nota de las 20:25 UTC salia
+    # fechada al dia siguiente. En GitHub Actions (que corre en UTC) coincidia por
+    # casualidad, por eso el fallo solo se veia en local. timegm() es correcto en
+    # las dos.
+    return datetime.fromtimestamp(calendar.timegm(parsed), tz=timezone.utc)
 
 
 def clean_summary(raw):
