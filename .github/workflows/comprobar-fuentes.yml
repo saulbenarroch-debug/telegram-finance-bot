@@ -1,0 +1,72 @@
+# Comprueba si las fuentes que nos dan 403 responden DESDE GitHub Actions.
+#
+# Por que existe: varias fuentes valiosas rechazan nuestras peticiones con 403
+# "Access Denied". Desde la maquina del dueño no se puede saber si es un bloqueo
+# por IP (trabaja tras VPN, y la VPN sale por un rango de centro de datos que
+# muchos servicios bloquean) o si simplemente no quieren lectores automaticos.
+# Aqui corre desde la IP real de produccion y se sale de dudas.
+#
+# Si alguna pasa, se puede leer desde Actions aunque no desde el escritorio, y
+# eso cambia como se disena el extractor: la lectura iria en un workflow y el
+# resultado se guardaria, en vez de consultarse en vivo.
+#
+# Solo lectura. Se dispara a mano, sin `schedule:` (regla de oro #4).
+
+name: Comprobar fuentes bloqueadas
+
+on:
+  workflow_dispatch:
+
+jobs:
+  comprobar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Desde donde nos ve el mundo
+        run: curl -s https://ipinfo.io/json | head -c 300; echo
+
+      - name: Probar las que nos bloquean
+        run: |
+          # nombre|url  — el separador es | porque las URL llevan ?
+          FUENTES='
+          IMF DataMapper inflacion VEN|https://www.imf.org/external/datamapper/api/v1/PCPIPCH/VEN
+          IMF DataMapper PIB VEN|https://www.imf.org/external/datamapper/api/v1/NGDP_RPCH/VEN
+          DANE Colombia comunicados|https://www.dane.gov.co/index.php/component/obrss/rss-comunicados
+          BID noticias|https://www.iadb.org/es/rss/noticias
+          FMI comunicados|https://www.imf.org/en/News/RSS?Language=SPA
+          Ultimas Noticias VE|https://ultimasnoticias.com.ve/feed/
+          El Economista MX|https://www.eleconomista.com.mx/rss/economia.xml
+          El Economista ES|https://www.eleconomista.es/rss/rss-economia.php
+          EFE Economia|https://efe.com/economia/feed/
+          Banxico comunicados|https://www.banxico.org.mx/rss/rss-comunicados.xml
+          SHCP Mexico|https://www.gob.mx/cms/rss/hacienda.xml
+          CEPALSTAT API|https://api-cepalstat.cepal.org/cepalstat/api/v1/indicator?lang=es&format=json
+          '
+          echo "$FUENTES" | while IFS='|' read -r nombre url; do
+            [ -z "$url" ] && continue
+            nombre=$(echo "$nombre" | sed 's/^ *//')
+            # -L sigue redirecciones: varias daban 302 y podian estar solo mudadas.
+            respuesta=$(curl -sL -o /tmp/f.out -w '%{http_code} %{size_download}' \
+              --max-time 25 \
+              -H 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36' \
+              -H 'Accept: application/json, application/rss+xml, text/xml, */*' \
+              "$url" || echo "000 0")
+            codigo=$(echo "$respuesta" | cut -d' ' -f1)
+            bytes=$(echo "$respuesta" | cut -d' ' -f2)
+            # Un 200 con dos bytes no sirve: se mira tambien si trae contenido.
+            if [ "$codigo" = "200" ] && [ "$bytes" -gt 500 ]; then
+              marca="OK   "
+              extra=$(head -c 90 /tmp/f.out | tr -d '\n' | tr -s ' ')
+            else
+              marca="NO   "
+              extra=""
+            fi
+            printf '%s%-32s %s  %8s bytes  %s\n' "$marca" "$nombre" "$codigo" "$bytes" "$extra"
+          done
+
+      - name: Conclusion
+        if: always()
+        run: |
+          echo "Las que salgan OK aqui y fallen en local estan bloqueadas POR IP."
+          echo "Esas se pueden leer desde un workflow y guardar el resultado,"
+          echo "aunque no se puedan consultar en vivo desde el escritorio."
