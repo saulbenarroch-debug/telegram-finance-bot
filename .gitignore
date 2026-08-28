@@ -6,3 +6,6 @@ venv/
 .pyruntime/
 entorno/out/
 entorno/datos.json
+
+# Copias de seguridad del .env: llevan secretos y no entran nunca al repo.
+.env.respaldo-*
