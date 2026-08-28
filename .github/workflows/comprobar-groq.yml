@@ -93,7 +93,12 @@ jobs:
             curl -s -o /tmp/resp.json -w '%{http_code}'               -X POST https://api.groq.com/openai/v1/chat/completions               -H "Authorization: Bearer $GROQ_API_KEY"               -H "Content-Type: application/json"               -d @/tmp/cuerpo.json
           }
 
-          for m in openai/gpt-oss-120b openai/gpt-oss-20b qwen/qwen3.6-27b; do
+          # Lista revisada contra /models el 28/08/2026. Groq apago el 16/08 la
+          # familia llama-3.x y qwen3-32b; los gpt-oss son el destino oficial de
+          # esa migracion, por eso encabezan. Se prueba tambien qwen3.8, que es
+          # el mas nuevo, sin quitar el 3.6: cuando uno se retire, el otro ya
+          # estara probado y no habra que averiguarlo con el bot caido.
+          for m in openai/gpt-oss-120b openai/gpt-oss-20b qwen/qwen3.8-27b qwen/qwen3.6-27b; do
             t=$(probar "$m" texto)
             j=$(probar "$m" json)
             echo "RESULTADO $m -> texto:$t json:$j"
