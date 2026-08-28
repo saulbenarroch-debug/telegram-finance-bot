@@ -75,15 +75,30 @@ Si tocas un prompt, respeta:
 
 ## IA: cadena de respaldo
 
-`gemini-2.5-flash-lite` → `gemini-2.5-flash` → `groq/llama-3.3-70b-versatile`.
+`gemini-3.5-flash-lite` → `gemini-3.5-flash` → `openai/gpt-oss-120b` (Groq).
+
+> Revisado contra `/models` el 28/08/2026. Este apartado decía
+> `groq/llama-3.3-70b-versatile`, que **Groq apagó el 16 de agosto de 2026**.
+> El código ya se había migrado (ver el comentario de `GROQ_MODEL` en `bot.py`),
+> pero la guía seguía nombrando un modelo muerto como red de seguridad, que es
+> justo lo que alguien lee con prisa cuando algo se cae.
 
 - Cada modelo de Gemini tiene **cuota diaria propia**, así que el fallback
-  multiplica el margen. En este proyecto: `2.5-flash` ≈ 20 req/día gratis,
-  `2.5-flash-lite` más alta, y **los `2.0-*` tienen límite 0 (inservibles)**.
+  multiplica el margen. Los `2.0-*` tenían límite 0 y eran inservibles; la
+  familia `3.5` es la vigente.
+- **Los modelos de imagen de Gemini tienen límite 0 en el plan gratuito**
+  (comprobado el 28/08/2026: aparecen en la cuenta y devuelven 429 con
+  `limit: 0`). Generar imágenes exige facturación activada.
+- **Groq bloquea las IP de VPN y de centros de datos.** Desde la máquina del
+  dueño siempre da 403, que parece una caída sin serlo. Se comprueba con el
+  workflow `Comprobar Groq`, que corre desde una IP limpia.
+- **El modo JSON nativo de Groq (`response_format: json_object`) sigue dando
+  400** en todos los modelos probados. Por eso el respaldo pide el JSON dentro
+  del prompt. No lo "arregles" pensando que ya funciona.
 - Lógica: `gemini_generate()` / `ai_generate()` en `bot.py`, `aiAnswer()` en
   `worker.js`. Manejan 429 (cuota → siguiente modelo) y 503/500 (temporal →
   reintento con espera creciente).
-- **El newsletter invierte el orden** (`2.5-flash` primero): es 1 llamada
+- **El newsletter invierte el orden** (`3.5-flash` primero): es 1 llamada
   semanal y la calidad importa más que la cuota.
 - `breaking.py` filtra por palabras clave (`HIGH_IMPACT_KEYWORDS`) **antes** de
   llamar a la IA, para no gastar cuota en horas tranquilas.
