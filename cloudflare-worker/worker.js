@@ -1435,7 +1435,7 @@ async function dispararNota(env, chatId, quien, extra) {
           ref: "main",
           // chat: para que el borrador vuelva por donde se pidio, no solo al correo.
           inputs: Object.assign(
-            { enlace: "", foto: "", quien: nombre, tipo: "Noticia", chat: String(chatId) },
+            { enlace: "", foto: "", encargo: "", quien: nombre, tipo: "Noticia", chat: String(chatId) },
             extra),
         }),
       }
@@ -1459,10 +1459,17 @@ async function comandoCaptura(env, chatId, msg) {
   const grande = msg.photo[msg.photo.length - 1];
   // Se manda el file_id y NO la direccion de descarga: esa lleva el token del
   // bot dentro y quedaria escrita en el registro de Actions para siempre.
-  const ok = await dispararNota(env, chatId, msg.from, { foto: grande.file_id });
+  // EL PIE DE FOTO ES UNA INSTRUCCION. Lo escribio una persona junto a la
+  // imagen: "hazla editorial", "enfocala en Venezuela". Viaja como encargo y
+  // nota.py saca de ahi el tipo de pieza y la orden de edicion.
+  const pie = (msg.caption || "").trim();
+  const ok = await dispararNota(env, chatId, msg.from,
+    { foto: grande.file_id, encargo: pie });
   await sendMessage(env, chatId, ok
-    ? "👀 Leyendo la captura. Busco la nota original en los medios de la lista " +
-      "y, si aparece, te devuelvo el borrador aquí. Si no la encuentro, te lo digo."
+    ? "👀 Leyendo la captura." +
+      (pie ? " Tomo nota de: «" + pie.slice(0, 120) + "»." : "") +
+      " Busco la nota original en los medios de la lista y, si aparece, te " +
+      "devuelvo el borrador aquí. Si no la encuentro, te lo digo."
     : "⚠️ No pude procesar la imagen. Vuelve a intentarlo en un momento.");
 }
 
