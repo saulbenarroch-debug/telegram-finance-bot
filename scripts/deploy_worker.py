@@ -34,6 +34,9 @@ TAVILY = os.environ.get("TAVILY_API_KEY", "").strip()
 # PAT de GitHub (Actions: read/write) para que el bot dispare el render de las
 # laminas. Si falta, el bot responde solo el texto del newsletter.
 GH_PAT = os.environ.get("GITHUB_PAT", "").strip()
+# Chat ids que pueden pedir notas con /nota. Si falta, el comando responde que
+# no hay nadie dado de alta en vez de dejar el motor abierto a cualquiera.
+REDACCION = os.environ.get("REDACCION_IDS", "").strip()
 
 API = "https://api.cloudflare.com/client/v4"
 H = {"Authorization": f"Bearer {CF_TOKEN}"}
@@ -83,6 +86,7 @@ def main():
             {"type": "secret_text", "name": "GROQ_API_KEY", "text": GROQ},
             {"type": "secret_text", "name": "TAVILY_API_KEY", "text": TAVILY},
             {"type": "secret_text", "name": "GITHUB_PAT", "text": GH_PAT},
+            {"type": "secret_text", "name": "REDACCION_IDS", "text": REDACCION},
             {"type": "secret_text", "name": "WEBHOOK_SECRET", "text": wh},
             {"type": "kv_namespace", "name": "KV", "namespace_id": kv_id},
         ],
