@@ -82,6 +82,8 @@ const ENTORNO_CRON = "0 12 * * 5"; // viernes 12:00 UTC = 8:00 a.m. VET
 // Repo donde vive el workflow que dibuja las laminas (Chrome headless no corre
 // en un Worker, asi que el render se delega a GitHub Actions).
 const GITHUB_REPO = "saulbenarroch-debug/telegram-finance-bot";
+// El medio vive en otro repositorio. El mismo PAT llega a los dos.
+const REPO_MEDIO = "saulbenarroch-debug/sureconomics-medio";
 const ENTORNO_TTL = 6 * 60 * 60; // seg. que se reusa una edición ya armada
 const ENTORNO_MAX_EDAD = 8 * 24 * 60 * 60 * 1000; // ms antes de avisar que está vieja
 
@@ -235,6 +237,11 @@ async function handleUpdate(update, env) {
   }
   if (text === "/id") {
     await sendMessage(env, chatId, "Tu chat ID es: " + chatId);
+    return;
+  }
+  // Pedir que se redacte una noticia: "/nota https://medio.com/la-nota".
+  if (text.toLowerCase().split(" ")[0].split("@")[0] === "/nota") {
+    await comandoNota(env, chatId, text, msg.from);
     return;
   }
   // Newsletter semanal, por comando o pedido en lenguaje natural.
@@ -1375,6 +1382,76 @@ async function enviarEntorno(env, chatId, force) {
         : "⚠️ El texto salió, pero no pude disparar el render de las láminas."
     );
   }
+}
+
+// ---------------------------------------------------------------------------
+// /nota: pedir que la redaccion automatica escriba una noticia.
+//
+// LISTA BLANCA, decidida el 01/09/2026. Solo los chat id dados de alta en
+// REDACCION_IDS pueden pedir notas. Sin esto, cualquiera que de con el bot
+// gasta cuota de IA y crea borradores en el panel del medio, y en Telegram
+// cualquier miembro de un grupo puede añadir a otro.
+//
+// SE EXIGE UN ENLACE, no un tema suelto. Con un enlace hay un documento
+// concreto que verificar; con un tema habria que fiarse de lo que el modelo
+// recuerde, que es justo lo que este motor no hace. nota.py lo vuelve a
+// comprobar por su cuenta, pero es mejor decirlo aqui que gastar una corrida.
+async function comandoNota(env, chatId, text, quien) {
+  const permitidos = String(env.REDACCION_IDS || "")
+    .split(",").map((s) => s.trim()).filter(Boolean);
+  if (!permitidos.includes(String(chatId))) {
+    await sendMessage(env, chatId,
+      "Este comando es solo para la redacción. Si necesitas acceso, pide que " +
+      "añadan tu chat ID (" + chatId + ") a la lista.");
+    return;
+  }
+
+  const resto = text.replace(/^\/nota(@\S+)?\s*/i, "").trim();
+  const enlace = (resto.match(/https?:\/\/\S+/) || [])[0];
+  if (!enlace) {
+    await sendHtml(env, chatId,
+      "Mándame el enlace de la nota:\n" +
+      "<code>/nota https://medio.com/la-noticia</code>\n\n" +
+      "Con el enlace hay una fuente concreta que verificar. Con un tema suelto, no.");
+    return;
+  }
+
+  if (!env.GITHUB_PAT) {
+    await sendMessage(env, chatId, "No tengo credencial para lanzar la redacción.");
+    return;
+  }
+
+  const nombre = [quien && quien.first_name, quien && quien.last_name]
+    .filter(Boolean).join(" ") || String(chatId);
+
+  let ok = false;
+  try {
+    const r = await fetch(
+      "https://api.github.com/repos/" + REPO_MEDIO + "/actions/workflows/nota.yml/dispatches",
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer " + env.GITHUB_PAT,
+          Accept: "application/vnd.github+json",
+          "X-GitHub-Api-Version": "2022-11-28",
+          "User-Agent": "sureconomics-bot",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          ref: "main",
+          inputs: { enlace: enlace, quien: nombre, tipo: "Noticia" },
+        }),
+      }
+    );
+    ok = r.status === 204; // GitHub responde 204 sin cuerpo cuando acepta
+  } catch {
+    ok = false;
+  }
+
+  await sendMessage(env, chatId, ok
+    ? "📝 A ello. Paso la fuente por el expediente, las cifras y el auditor, y " +
+      "el borrador llega al correo en unos minutos. Nada se publica solo."
+    : "⚠️ No pude lanzar la redacción. Vuelve a intentarlo en un momento.");
 }
 
 // Dispara el workflow "Entorno en Vinetas" pasandole el chat que lo pidio.
