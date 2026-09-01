@@ -227,7 +227,17 @@ export default {
 
 async function handleUpdate(update, env) {
   const msg = update.message || update.edited_message;
-  if (!msg || !msg.text) return;
+  if (!msg) return;
+
+  // UNA FOTO ES UNA NOTICIA QUE ALGUIEN VIO. Los jefes mandan las noticias como
+  // capturas de Instagram, asi que una foto sin texto no es ruido: es un
+  // encargo. Va antes del filtro de abajo, que hasta hoy las tiraba todas.
+  if (msg.photo && msg.photo.length) {
+    await comandoCaptura(env, msg.chat.id, msg);
+    return;
+  }
+
+  if (!msg.text) return;
   const chatId = msg.chat.id;
   const text = msg.text.trim();
 
@@ -1396,10 +1406,68 @@ async function enviarEntorno(env, chatId, force) {
 // concreto que verificar; con un tema habria que fiarse de lo que el modelo
 // recuerde, que es justo lo que este motor no hace. nota.py lo vuelve a
 // comprobar por su cuenta, pero es mejor decirlo aqui que gastar una corrida.
+// Quien puede pedir notas. Lo usan el comando y las capturas: una sola lista.
+function enLaRedaccion(env, chatId) {
+  return String(env.REDACCION_IDS || "")
+    .split(",").map((s) => s.trim()).filter(Boolean).includes(String(chatId));
+}
+
+// Un solo sitio que dispara nota.yml. Antes estaba escrito dentro de
+// comandoNota y al llegar las capturas habria hecho falta una segunda copia;
+// hoy mismo un nombre calculado en dos sitios distintos ya costo una corrida.
+async function dispararNota(env, chatId, quien, extra) {
+  if (!env.GITHUB_PAT) return false;
+  const nombre = [quien && quien.first_name, quien && quien.last_name]
+    .filter(Boolean).join(" ") || String(chatId);
+  try {
+    const r = await fetch(
+      "https://api.github.com/repos/" + REPO_MEDIO + "/actions/workflows/nota.yml/dispatches",
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer " + env.GITHUB_PAT,
+          Accept: "application/vnd.github+json",
+          "X-GitHub-Api-Version": "2022-11-28",
+          "User-Agent": "sureconomics-bot",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          ref: "main",
+          // chat: para que el borrador vuelva por donde se pidio, no solo al correo.
+          inputs: Object.assign(
+            { enlace: "", foto: "", quien: nombre, tipo: "Noticia", chat: String(chatId) },
+            extra),
+        }),
+      }
+    );
+    return r.status === 204; // GitHub responde 204 sin cuerpo cuando acepta
+  } catch {
+    return false;
+  }
+}
+
+// Una captura de pantalla mandada al bot. Se coge la de MAYOR resolucion:
+// Telegram manda el mismo archivo en varios tamaños y el ultimo es el grande.
+// Con la miniatura, el texto del titular no se lee.
+async function comandoCaptura(env, chatId, msg) {
+  if (!enLaRedaccion(env, chatId)) {
+    await sendMessage(env, chatId,
+      "Recibí la imagen, pero este bot solo redacta para la redacción. Si " +
+      "necesitas acceso, pide que añadan tu chat ID (" + chatId + ") a la lista.");
+    return;
+  }
+  const grande = msg.photo[msg.photo.length - 1];
+  // Se manda el file_id y NO la direccion de descarga: esa lleva el token del
+  // bot dentro y quedaria escrita en el registro de Actions para siempre.
+  const ok = await dispararNota(env, chatId, msg.from, { foto: grande.file_id });
+  await sendMessage(env, chatId, ok
+    ? "👀 Leyendo la captura. Busco la nota original en los medios de la lista " +
+      "y, si aparece, te devuelvo el borrador aquí. Si no la encuentro, te lo digo."
+    : "⚠️ No pude procesar la imagen. Vuelve a intentarlo en un momento.");
+}
+
 async function comandoNota(env, chatId, text, quien) {
-  const permitidos = String(env.REDACCION_IDS || "")
-    .split(",").map((s) => s.trim()).filter(Boolean);
-  if (!permitidos.includes(String(chatId))) {
+  if (!enLaRedaccion(env, chatId)) {
     await sendMessage(env, chatId,
       "Este comando es solo para la redacción. Si necesitas acceso, pide que " +
       "añadan tu chat ID (" + chatId + ") a la lista.");
@@ -1421,33 +1489,7 @@ async function comandoNota(env, chatId, text, quien) {
     return;
   }
 
-  const nombre = [quien && quien.first_name, quien && quien.last_name]
-    .filter(Boolean).join(" ") || String(chatId);
-
-  let ok = false;
-  try {
-    const r = await fetch(
-      "https://api.github.com/repos/" + REPO_MEDIO + "/actions/workflows/nota.yml/dispatches",
-      {
-        method: "POST",
-        headers: {
-          Authorization: "Bearer " + env.GITHUB_PAT,
-          Accept: "application/vnd.github+json",
-          "X-GitHub-Api-Version": "2022-11-28",
-          "User-Agent": "sureconomics-bot",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          ref: "main",
-          // chat: para que el borrador vuelva por donde se pidio, no solo al correo.
-          inputs: { enlace: enlace, quien: nombre, tipo: "Noticia", chat: String(chatId) },
-        }),
-      }
-    );
-    ok = r.status === 204; // GitHub responde 204 sin cuerpo cuando acepta
-  } catch {
-    ok = false;
-  }
+  const ok = await dispararNota(env, chatId, quien, { enlace: enlace });
 
   await sendMessage(env, chatId, ok
     ? "📝 A ello. Paso la fuente por el expediente, las cifras y el auditor, y " +
