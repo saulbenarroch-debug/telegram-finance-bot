@@ -1439,7 +1439,8 @@ async function comandoNota(env, chatId, text, quien) {
         },
         body: JSON.stringify({
           ref: "main",
-          inputs: { enlace: enlace, quien: nombre, tipo: "Noticia" },
+          // chat: para que el borrador vuelva por donde se pidio, no solo al correo.
+          inputs: { enlace: enlace, quien: nombre, tipo: "Noticia", chat: String(chatId) },
         }),
       }
     );
@@ -1450,7 +1451,7 @@ async function comandoNota(env, chatId, text, quien) {
 
   await sendMessage(env, chatId, ok
     ? "📝 A ello. Paso la fuente por el expediente, las cifras y el auditor, y " +
-      "el borrador llega al correo en unos minutos. Nada se publica solo."
+      "te lo devuelvo aquí en unos minutos. También va al correo. Nada se publica solo."
     : "⚠️ No pude lanzar la redacción. Vuelve a intentarlo en un momento.");
 }
 
