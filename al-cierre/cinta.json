@@ -1,0 +1,35 @@
+{
+  "actualizado": "2026-09-02T14:44:08+00:00",
+  "fecha_cierre": "2026-07-21",
+  "valores": [
+    {
+      "clave": "ves_usd",
+      "etiqueta": "BCV USD",
+      "valor": 737.23,
+      "variacion": 0.04,
+      "unidad": "Bs",
+      "fuente": "Banco Central de Venezuela",
+      "url_fuente": "https://www.bcv.org.ve/"
+    },
+    {
+      "clave": "ves_eur",
+      "etiqueta": "BCV EUR",
+      "valor": 840.71,
+      "variacion": -0.3,
+      "unidad": "Bs",
+      "fuente": "Banco Central de Venezuela",
+      "url_fuente": "https://www.bcv.org.ve/"
+    },
+    {
+      "clave": "ibc",
+      "etiqueta": "IBC",
+      "valor": 5128.15,
+      "variacion": -0.32,
+      "unidad": "pts",
+      "fuente": "Bolsa de Valores de Caracas",
+      "url_fuente": "https://www.bolsadecaracas.com/"
+    }
+  ],
+  "faltan": [],
+  "nota": "Solo datos de emisor oficial venezolano. Los indices globales los sirve TradingView en el navegador del lector."
+}

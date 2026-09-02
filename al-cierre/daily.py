@@ -63,6 +63,14 @@ def main():
         run("render.py")
         run("send_telegram.py")
 
+        # El cintillo de la web va DESPUES de mandar las laminas, y su fallo no
+        # tumba nada: si cinta.py se rompe, el producto principal ya salio. Solo
+        # escribe los tres datos venezolanos; ver la cabecera de cinta.py.
+        try:
+            run("cinta.py")
+        except RuntimeError as e:
+            log("cinta.json no se pudo generar (%s). Las laminas si salieron." % e)
+
         if fetch_warn:
             alert("Las laminas se enviaron, pero algunos valores fallaron:\n" + fetch_warn)
         log("=== fin OK ===")

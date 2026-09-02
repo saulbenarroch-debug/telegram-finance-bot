@@ -3,3 +3,8 @@ daily.log
 data.json
 overrides.json
 __pycache__/
+
+# cinta.json SI se versiona: es lo que lee el cintillo de la web, y se sirve
+# desde el repo publico con CORS abierto. data.json sigue fuera porque lleva
+# los 20 datos de Yahoo, que no se pueden publicar.
+!cinta.json

@@ -62,7 +62,10 @@ jobs:
           date +%F > al-cierre/last_sent.txt
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          # cinta.json alimenta el cintillo de sureconomics.com. Con -f porque
+          # la carpeta esta ignorada salvo esta excepcion.
           git add al-cierre/bcv_history.json al-cierre/last_sent.txt
+          git add -f al-cierre/cinta.json 2>/dev/null || echo "sin cinta.json"
           git commit -m "Al Cierre: historico $(date +%F) [skip ci]" || echo "sin cambios que guardar"
           git pull --rebase origin main
           git push
