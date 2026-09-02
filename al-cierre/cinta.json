@@ -1,12 +1,12 @@
 {
-  "actualizado": "2026-09-02T14:44:08+00:00",
-  "fecha_cierre": "2026-07-21",
+  "actualizado": "2026-09-02T21:30:49+00:00",
+  "fecha_cierre": "2026-09-02",
   "valores": [
     {
       "clave": "ves_usd",
       "etiqueta": "BCV USD",
-      "valor": 737.23,
-      "variacion": 0.04,
+      "valor": 801.18,
+      "variacion": 0.36,
       "unidad": "Bs",
       "fuente": "Banco Central de Venezuela",
       "url_fuente": "https://www.bcv.org.ve/"
@@ -14,8 +14,8 @@
     {
       "clave": "ves_eur",
       "etiqueta": "BCV EUR",
-      "valor": 840.71,
-      "variacion": -0.3,
+      "valor": 929.09,
+      "variacion": 0.27,
       "unidad": "Bs",
       "fuente": "Banco Central de Venezuela",
       "url_fuente": "https://www.bcv.org.ve/"
@@ -23,8 +23,8 @@
     {
       "clave": "ibc",
       "etiqueta": "IBC",
-      "valor": 5128.15,
-      "variacion": -0.32,
+      "valor": 5653.65,
+      "variacion": 0.84,
       "unidad": "pts",
       "fuente": "Bolsa de Valores de Caracas",
       "url_fuente": "https://www.bolsadecaracas.com/"
