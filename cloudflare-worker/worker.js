@@ -1455,10 +1455,15 @@ async function comandoBoton(env, cq) {
     await responder("Solo la redacción puede pedir notas.");
     return;
   }
-  const n = parseInt(String(cq.data || "").split(":")[1], 10);
+  // Dos botones distintos, misma mecanica: "nota:N" elige entre los candidatos
+  // de una captura dudosa; "forzar:N" reescribe una que la memoria da por
+  // publicada. Solo cambia si se manda o no la instruccion "igual".
+  const partes = String(cq.data || "").split(":");
+  const n = parseInt(partes[1], 10);
   const enlaces = String((cq.message && cq.message.text) || "")
     .match(/\/nota\s+(https?:\/\/\S+)/g) || [];
   const elegido = (enlaces[n - 1] || "").replace(/^\/nota\s+/, "");
+  const forzar = partes[0] === "forzar";
   if (!elegido) {
     // Pasa si el mensaje es viejo y se edito, o si el boton no casa con el
     // texto. Mejor decirlo que escribir la nota equivocada.
@@ -1469,10 +1474,14 @@ async function comandoBoton(env, cq) {
   // El aviso del boton se contesta ANTES de disparar. Telegram deja el boton
   // girando hasta que se le responde y solo espera unos segundos; lanzar
   // primero el workflow dejaria la sensacion de que no paso nada.
-  await responder("Voy con esa.");
-  const ok = await dispararNota(env, chatId, cq.from, { enlace: elegido, encargo: "" });
+  await responder(forzar ? "La escribo igual." : "Voy con esa.");
+  const ok = await dispararNota(env, chatId, cq.from,
+    { enlace: elegido, encargo: forzar ? "igual" : "" });
   await sendMessage(env, chatId, ok
-    ? "📝 A ello, desde ese enlace. Te lo devuelvo aquí en unos minutos."
+    ? (forzar
+        ? "📝 A ello, aunque ya esté publicada. "
+        : "📝 A ello, desde ese enlace. ") +
+      "Te lo devuelvo aquí en unos minutos."
     : "⚠️ No pude lanzar la redacción. Vuelve a intentarlo en un momento.");
 }
 
