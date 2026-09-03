@@ -117,7 +117,11 @@ def main():
     )
     print("[ok] crons:", r.status_code, r.json().get("success"), CRONS)
 
-    # Webhook de Telegram.
+    # Webhook de Telegram. Sin 'allowed_updates' a proposito: por omision
+    # Telegram manda todo menos las reacciones, y ahi entra callback_query, que
+    # es lo que necesitan los botones de la franja dudosa. Si algun dia se pone
+    # la lista explicita, callback_query tiene que ir dentro o los botones dejan
+    # de responder sin dar ningun error.
     url = f"https://{NAME}.{sub}.workers.dev"
     r = requests.post(
         f"https://api.telegram.org/bot{TG}/setWebhook",

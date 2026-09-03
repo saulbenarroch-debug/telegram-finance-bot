@@ -74,6 +74,8 @@ const WELCOME =
   "<b>2. Escribo notas para el panel</b>, si estás en la redacción. Todo lo " +
   "que escribo queda en BORRADOR: publicar lo hace una persona.\n" +
   "• <code>/nota &lt;enlace&gt;</code> — la escribo desde esa fuente\n" +
+  "• <code>/nota &lt;tema&gt;</code> — sin enlace: busco quién lo cuenta en la " +
+  "lista de medios y cruzo hasta tres\n" +
   "• <code>/nota &lt;enlace&gt; hazla editorial</code> — lo que escribas " +
   "detrás es una instrucción de edición\n" +
   "• <code>/nota &lt;enlace&gt; igual</code> — la escribo aunque ya esté publicada\n" +
@@ -236,6 +238,14 @@ export default {
 };
 
 async function handleUpdate(update, env) {
+  // Botones de la franja dudosa. Cuando una captura no casa con seguridad con
+  // ningun original, nota.py contesta con los candidatos y un boton por cada
+  // uno; esto es lo que atiende el toque.
+  if (update.callback_query) {
+    await comandoBoton(env, update.callback_query);
+    return;
+  }
+
   const msg = update.message || update.edited_message;
   if (!msg) return;
 
@@ -1412,14 +1422,73 @@ async function enviarEntorno(env, chatId, force) {
 // gasta cuota de IA y crea borradores en el panel del medio, y en Telegram
 // cualquier miembro de un grupo puede añadir a otro.
 //
-// SE EXIGE UN ENLACE, no un tema suelto. Con un enlace hay un documento
-// concreto que verificar; con un tema habria que fiarse de lo que el modelo
-// recuerde, que es justo lo que este motor no hace. nota.py lo vuelve a
-// comprobar por su cuenta, pero es mejor decirlo aqui que gastar una corrida.
+// YA NO SE EXIGE UN ENLACE. Hasta el 03/09/2026 un tema suelto se rechazaba
+// aqui mismo, y el motivo era bueno: con un tema habria que fiarse de lo que el
+// modelo recuerde, que es justo lo que este motor no hace. Lo que cambio es que
+// nota.py ya no se fia: busca el tema en la lista blanca, lee hasta tres medios
+// distintos y escribe desde esos documentos. Sigue sin haber una sola cifra que
+// no venga de una fuente leida; lo unico que se ahorra es que la persona tenga
+// que ir a buscar el enlace ella. Si no encuentra nada, lo dice y no escribe.
 // Quien puede pedir notas. Lo usan el comando y las capturas: una sola lista.
 function enLaRedaccion(env, chatId) {
   return String(env.REDACCION_IDS || "")
     .split(",").map((s) => s.trim()).filter(Boolean).includes(String(chatId));
+}
+
+// ---------------------------------------------------------------------------
+// El toque de un boton de la franja dudosa.
+//
+// DONDE ESTA EL ENLACE. En callback_data no cabe: Telegram lo limita a 64
+// bytes y una direccion de noticia se pasa sola. Asi que el boton solo lleva su
+// numero ("nota:2") y la direccion se saca del texto del propio mensaje, que ya
+// la lleva escrita en su linea /nota. No hace falta guardar nada en ningun
+// sitio, y eso es lo que hace que siga funcionando dentro de una semana: no hay
+// estado que caduque, se pierda al redesplegar ni haya que limpiar.
+//
+// El texto llega SIN formato (Telegram entrega el plano, no el HTML), asi que
+// las direcciones se ven tal cual.
+async function comandoBoton(env, cq) {
+  const chatId = cq.message && cq.message.chat && cq.message.chat.id;
+  const responder = (aviso) => avisarBoton(env, cq.id, aviso);
+
+  if (!enLaRedaccion(env, chatId)) {
+    await responder("Solo la redacción puede pedir notas.");
+    return;
+  }
+  const n = parseInt(String(cq.data || "").split(":")[1], 10);
+  const enlaces = String((cq.message && cq.message.text) || "")
+    .match(/\/nota\s+(https?:\/\/\S+)/g) || [];
+  const elegido = (enlaces[n - 1] || "").replace(/^\/nota\s+/, "");
+  if (!elegido) {
+    // Pasa si el mensaje es viejo y se edito, o si el boton no casa con el
+    // texto. Mejor decirlo que escribir la nota equivocada.
+    await responder("No encuentro ese enlace. Mándamelo con /nota.");
+    return;
+  }
+
+  // El aviso del boton se contesta ANTES de disparar. Telegram deja el boton
+  // girando hasta que se le responde y solo espera unos segundos; lanzar
+  // primero el workflow dejaria la sensacion de que no paso nada.
+  await responder("Voy con esa.");
+  const ok = await dispararNota(env, chatId, cq.from, { enlace: elegido, encargo: "" });
+  await sendMessage(env, chatId, ok
+    ? "📝 A ello, desde ese enlace. Te lo devuelvo aquí en unos minutos."
+    : "⚠️ No pude lanzar la redacción. Vuelve a intentarlo en un momento.");
+}
+
+// Contesta el toque para que el boton deje de girar. Si esto falla no se corta
+// nada: es cosmetico y la nota ya se pidio.
+async function avisarBoton(env, id, texto) {
+  try {
+    await fetch("https://api.telegram.org/bot" + env.TELEGRAM_TOKEN + "/answerCallbackQuery",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ callback_query_id: id, text: texto }),
+      });
+  } catch {
+    /* el boton se queda girando un rato y ya */
+  }
 }
 
 // Un solo sitio que dispara nota.yml. Antes estaba escrito dentro de
@@ -1493,11 +1562,13 @@ async function comandoNota(env, chatId, text, quien) {
 
   const resto = text.replace(/^\/nota(@\S+)?\s*/i, "").trim();
   const enlace = (resto.match(/https?:\/\/\S+/) || [])[0];
-  if (!enlace) {
+  if (!resto) {
     await sendHtml(env, chatId,
-      "Mándame el enlace de la nota:\n" +
-      "<code>/nota https://medio.com/la-noticia</code>\n\n" +
-      "Con el enlace hay una fuente concreta que verificar. Con un tema suelto, no.");
+      "Dime de qué la escribo:\n" +
+      "<code>/nota https://medio.com/la-noticia</code>\n" +
+      "<code>/nota el relevo de Tim Cook en Apple</code>\n\n" +
+      "Con enlace escribo desde esa fuente. Con un tema la busco en la lista " +
+      "de medios y cruzo los que la cuenten.");
     return;
   }
 
@@ -1510,13 +1581,24 @@ async function comandoNota(env, chatId, text, quien) {
   // el pie de una captura: "hazla editorial", "escribela igual aunque ya este".
   // Hasta hoy se tiraba, y con ella se tiraba la unica forma de forzar una nota
   // que la memoria daba por publicada, que es algo que el propio bot ofrece.
-  const encargo = resto.replace(enlace, "").trim();
+  //
+  // SIN ENLACE, TODO EL TEXTO ES EL TEMA. No se intenta separar el tema de la
+  // instruccion porque no hay forma fiable de hacerlo y equivocarse sale caro
+  // en los dos sentidos: partir mal la frase estropea la busqueda, y adivinar
+  // una instruccion que nadie dio cambia la pieza. nota.py busca con la frase
+  // entera y ahi mismo detecta el "igual" si aparece.
   const ok = await dispararNota(env, chatId, quien,
-    { enlace: enlace, encargo: encargo });
+    enlace
+      ? { enlace: enlace, encargo: resto.replace(enlace, "").trim() }
+      : { enlace: resto, encargo: "" });
 
+  const aviso = enlace
+    ? "📝 A ello. Paso la fuente por el expediente, las cifras y el auditor."
+    : "🔎 A ello. Busco quién lo cuenta en la lista de medios, cruzo hasta tres " +
+      "y lo paso todo por el expediente, las cifras y el auditor.";
   await sendMessage(env, chatId, ok
-    ? "📝 A ello. Paso la fuente por el expediente, las cifras y el auditor, y " +
-      "te lo devuelvo aquí en unos minutos. También va al correo. Nada se publica solo."
+    ? aviso + " Te lo devuelvo aquí en unos minutos. También va al correo. " +
+      "Nada se publica solo."
     : "⚠️ No pude lanzar la redacción. Vuelve a intentarlo en un momento.");
 }
 
