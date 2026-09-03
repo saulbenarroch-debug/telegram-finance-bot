@@ -60,18 +60,28 @@ const FEEDS = [
   { cat: "Global", url: "https://feeds.bbci.co.uk/news/business/rss.xml" },
 ];
 
+// La ayuda tiene que nombrar lo que el bot sabe hacer HOY. Hasta el 02/09/2026
+// seguia describiendo solo el asistente de consultas, sin mencionar /nota ni
+// las capturas, que es la mitad del trabajo que hace ahora. Si alguien nuevo
+// escribe /start y no ve una funcion, esa funcion no existe para esa persona.
 const WELCOME =
-  "👋 Soy el asistente de Sureconomics. Pregúntame sobre economía de " +
-  "Venezuela, Suramérica, fusiones y adquisiciones (M&A) o mercados.\n\n" +
-  "Guardo un historial de noticias, así que puedo comentar también lo de días " +
-  "anteriores. Ejemplos:\n" +
+  "👋 Soy el asistente de SurEconomics. Hago dos cosas.\n\n" +
+  "<b>1. Respondo preguntas</b> sobre economía de Venezuela, Suramérica, " +
+  "fusiones y adquisiciones o mercados. Guardo historial, así que puedo " +
+  "comentar también lo de días anteriores:\n" +
   "• ¿Qué está pasando con el dólar en Venezuela?\n" +
-  "• Busca noticias de litio en Argentina\n" +
-  "• ¿Qué pasó esta semana con M&A en la región?\n\n" +
-  "📰 Y para el newsletter semanal, pídeme:\n" +
-  "• Dame el entorno en viñetas   (o /entorno)\n" +
-  "Se arma solo cada viernes a las 8:00 a.m. (VET); si lo pides después, te lo " +
-  "devuelvo al instante.";
+  "• Busca noticias de litio en Argentina\n\n" +
+  "<b>2. Escribo notas para el panel</b>, si estás en la redacción. Todo lo " +
+  "que escribo queda en BORRADOR: publicar lo hace una persona.\n" +
+  "• <code>/nota &lt;enlace&gt;</code> — la escribo desde esa fuente\n" +
+  "• <code>/nota &lt;enlace&gt; hazla editorial</code> — lo que escribas " +
+  "detrás es una instrucción de edición\n" +
+  "• <code>/nota &lt;enlace&gt; igual</code> — la escribo aunque ya esté publicada\n" +
+  "• <b>Mándame una captura</b> de una noticia y busco el original para " +
+  "escribirla. Si me dices «súbela con esta imagen», la uso de portada\n\n" +
+  "📰 Newsletter semanal: pídeme «dame el entorno en viñetas» (o /entorno). " +
+  "Se arma solo los viernes a las 8:00 a.m.\n\n" +
+  "Tu chat ID, por si te piden dar de alta: /id";
 
 // ---------------------------------------------------------------------------
 // ENTORNO EN VIÑETAS — newsletter semanal (contraportada, noticia principal,
@@ -242,7 +252,7 @@ async function handleUpdate(update, env) {
   const text = msg.text.trim();
 
   if (text === "/start" || text === "/help") {
-    await sendMessage(env, chatId, WELCOME);
+    await sendHtml(env, chatId, WELCOME);   // lleva <b> y <code>
     return;
   }
   if (text === "/id") {
