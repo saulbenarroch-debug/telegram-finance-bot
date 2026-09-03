@@ -279,6 +279,15 @@ async function handleUpdate(update, env) {
     await enviarEntorno(env, chatId, /\bforz|de nuevo|refresc|actualiz/i.test(text));
     return;
   }
+  // "Redáctame una noticia de lo que dijo X hoy" es un encargo, no una
+  // pregunta. Hasta el 03/09/2026 caia en el asistente de consultas, que
+  // contestaba explicando la noticia en vez de escribirla, y desde fuera parecia
+  // que el bot se negaba. Solo cuenta para la redaccion: a cualquier otro se le
+  // responde como siempre.
+  if (enLaRedaccion(env, chatId) && esPedidoNota(text)) {
+    await comandoNota(env, chatId, "/nota " + temaDelPedido(text), msg.from);
+    return;
+  }
   // Actualizar el IPC del BCV a mano: "/ipc 13,8 129,8 junio 2026".
   if (text.toLowerCase().startsWith("/ipc")) {
     await comandoIpc(env, chatId, text);
@@ -548,12 +557,19 @@ function buildPrompt(question, live, stored, history) {
       history.map((m) => (m.r === "user" ? "Usuario" : "Tú") + ": " + m.c).join("\n") +
       "\n\n"
     : "";
+  // EL ENLACE VA DENTRO. Hasta el 03/09/2026 aqui solo entraban titular, autor
+  // y fecha, y el enlace se quedaba fuera aunque los articulos lo traen (it.l).
+  // Consecuencia: cuando alguien de la redaccion pedia "dame la fuente para
+  // hacer el /nota", el modelo no podia darla porque nunca la habia visto, y o
+  // se disculpaba o se la inventaba. No era pereza del modelo, era un dato que
+  // no le llegaba.
   const liveBlock = live.length
     ? "NOTICIAS EN VIVO (el texto tras el último ' - ' suele ser la fuente):\n" +
       live
         .map(
           (n, i) =>
-            `${i + 1}. ${n.t}${n.a ? ` [autor: ${n.a}]` : ""}${n.d ? ` (${n.d})` : ""}`
+            `${i + 1}. ${n.t}${n.a ? ` [autor: ${n.a}]` : ""}${n.d ? ` (${n.d})` : ""}` +
+            `${n.l ? `\n   enlace: ${n.l}` : ""}`
         )
         .join("\n") +
       "\n\n"
@@ -563,7 +579,8 @@ function buildPrompt(question, live, stored, history) {
       stored
         .map(
           (a, i) =>
-            `${i + 1}. [${a.c}] ${a.t}${a.a ? ` [autor: ${a.a}]` : ""}${a.d ? ` (${a.d})` : ""}`
+            `${i + 1}. [${a.c}] ${a.t}${a.a ? ` [autor: ${a.a}]` : ""}${a.d ? ` (${a.d})` : ""}` +
+            `${a.l ? `\n   enlace: ${a.l}` : ""}`
         )
         .join("\n") +
       "\n\n"
@@ -585,6 +602,13 @@ function buildPrompt(question, live, stored, history) {
     "uses un tono editorial ni 'nuestra lectura' ni primera persona plural.\n" +
     "- Sé objetivo y concreto. Si usas una noticia, cita la fuente (y el autor si " +
     "aparece). No inventes datos ni cifras.\n" +
+    "- Si te piden el enlace o la fuente de algo, DALO: cada noticia de abajo " +
+    "trae su 'enlace'. Cópialo tal cual, entero. Nunca escribas un enlace que no " +
+    "esté abajo, ni lo acortes ni lo reconstruyas de memoria: si de una noticia " +
+    "no hay enlace, dilo en vez de inventarlo.\n" +
+    "- Si te piden redactar o escribir una noticia, tú no la redactas: la escribe " +
+    "otro proceso, con su expediente de cifras y su auditor. Dale el enlace de la " +
+    "fuente y dile que use /nota con ese enlace, o que mande /nota y el tema.\n" +
     "- Si piden 'solo verificadas', prioriza medios reconocidos y acláralo.\n" +
     "- Si no sabes algo o no está en la información disponible, dilo con " +
     "honestidad.\n" +
@@ -1429,6 +1453,50 @@ async function enviarEntorno(env, chatId, force) {
 // distintos y escribe desde esos documentos. Sigue sin haber una sola cifra que
 // no venga de una fuente leida; lo unico que se ahorra es que la persona tenga
 // que ir a buscar el enlace ella. Si no encuentra nada, lo dice y no escribe.
+// "Redactame una noticia de X" dicho a mano, sin acordarse del comando.
+//
+// EL PATRON ES ESTRECHO A PROPOSITO. Tiene que haber un VERBO EN IMPERATIVO
+// («redacta», «escribe», «haz») pegado a «nota» o «noticia». Con algo mas suelto
+// -cualquier frase que mencionase «noticia»- se dispararia una corrida de
+// Actions cada vez que alguien preguntase "¿que noticias hay de Chevron?", que
+// es la pregunta mas comun que recibe el bot. Falso negativo: la persona escribe
+// /nota. Falso positivo: se gasta una corrida y aparece un borrador que nadie
+// pidio.
+const PEDIDO_NOTA = new RegExp(
+  "^\\s*(?:me\\s+)?(?:puedes\\s+|podrias\\s+|porfa\\s+)?" +
+  "(redact|escrib|haz(?:me)?|hac(?:me)?|arma(?:me)?|prepara(?:me)?)\\w*" +
+  "(?:me)?\\s+(?:una?\\s+|la\\s+|el\\s+)?(nota|noticia|pieza)\\b",
+  "i");
+
+// Sin tildes, LETRA A LETRA. Tiene que conservar las posiciones para poder
+// recortar despues sobre el texto original; por eso no se usa normalize("NFD"),
+// que descompone en dos caracteres y descuadra los indices.
+//
+// Hace falta porque el primer patron no reconocia "redáctame", que es
+// literalmente como lo escribio Edicion: "redact" no casa contra "redáct".
+function sinTildes(s) {
+  return String(s || "").replace(/[áéíóúüñÁÉÍÓÚÜÑ]/g,
+    (c) => "aeiouunAEIOUUN"["áéíóúüñÁÉÍÓÚÜÑ".indexOf(c)]);
+}
+
+function esPedidoNota(texto) {
+  return PEDIDO_NOTA.test(sinTildes(texto));
+}
+
+// Lo que queda del encargo una vez quitado el "redactame una noticia de".
+// Se le pasa a /nota como tema; si dentro hay un enlace, comandoNota lo detecta
+// y escribe desde esa fuente en vez de buscar.
+function temaDelPedido(texto) {
+  const original = String(texto || "");
+  const m = PEDIDO_NOTA.exec(sinTildes(original));
+  // Se corta sobre el ORIGINAL, con las tildes puestas: el tema se va a buscar
+  // en medios en español y "Maria Corina Machado" sin tilde busca peor.
+  const resto = m ? original.slice(m.index + m[0].length) : original;
+  return resto
+    .replace(/^\s*(?:sobre|de|acerca de|del|de la|con)\b\s*/i, "")
+    .trim();
+}
+
 // Quien puede pedir notas. Lo usan el comando y las capturas: una sola lista.
 function enLaRedaccion(env, chatId) {
   return String(env.REDACCION_IDS || "")
