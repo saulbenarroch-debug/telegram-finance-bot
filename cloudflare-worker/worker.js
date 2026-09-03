@@ -1496,7 +1496,13 @@ async function comandoNota(env, chatId, text, quien) {
     return;
   }
 
-  const ok = await dispararNota(env, chatId, quien, { enlace: enlace });
+  // Lo que se escriba junto al enlace es una instruccion de edicion, igual que
+  // el pie de una captura: "hazla editorial", "escribela igual aunque ya este".
+  // Hasta hoy se tiraba, y con ella se tiraba la unica forma de forzar una nota
+  // que la memoria daba por publicada, que es algo que el propio bot ofrece.
+  const encargo = resto.replace(enlace, "").trim();
+  const ok = await dispararNota(env, chatId, quien,
+    { enlace: enlace, encargo: encargo });
 
   await sendMessage(env, chatId, ok
     ? "📝 A ello. Paso la fuente por el expediente, las cifras y el auditor, y " +
