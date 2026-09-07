@@ -285,8 +285,12 @@ async function handleUpdate(update, env) {
   // que el bot se negaba. Solo cuenta para la redaccion: a cualquier otro se le
   // responde como siempre.
   if (enLaRedaccion(env, chatId) && esPedidoNota(text)) {
-    await comandoNota(env, chatId, "/nota " + temaDelPedido(text), msg.from,
-                      tipoDelPedido(text));
+    // El tipo primero, porque decide si un "de Fulano" es la firma o el tema.
+    // Despues la firma, y el tema se calcula sobre lo que queda.
+    const queTipo = tipoDelPedido(text);
+    await comandoNota(env, chatId,
+                      "/nota " + temaDelPedido(sinLaFirma(text, queTipo)),
+                      msg.from, queTipo, autorDelPedido(text, queTipo));
     return;
   }
   // Actualizar el IPC del BCV a mano: "/ipc 13,8 129,8 junio 2026".
@@ -1502,6 +1506,65 @@ function esPedidoNota(texto) {
   return PEDIDO_NOTA.test(sinTildes(texto));
 }
 
+// QUIEN FIRMA. Una opinión sin nombre y apellido no se escribe: el prompt
+// devuelve faltantes:["autor"] y no hay pieza, asi que las columnas no se
+// podian encargar desde el bot.
+//
+// SE EXIGEN DOS PALABRAS EN MAYUSCULA, o sea nombre y apellido. En español "de"
+// introduce igual al autor que al tema, y con una sola palabra "una columna de
+// Venezuela" habria firmado la pieza como "Venezuela". Un nombre completo si es
+// una señal fiable, y ademas es lo que la opinión necesita: firmar con el
+// nombre de pila no vale para un medio.
+//
+// Se busca sobre el texto SIN tildes por lo de siempre, pero se recorta y se
+// devuelve sobre el ORIGINAL: la firma se publica, y "Oscar Doval" no es como
+// se llama.
+const NOMBRE_FIRMA =
+  "[A-ZÁÉÍÓÚÑ][a-záéíóúñ'-]+(?:\\s+(?:de|del|la|las|los|van|von|da|di))?" +
+  "(?:\\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ'-]+){1,3}";
+// Y HAY DOS CASOS, no uno, porque "de" no basta como señal.
+//
+// "hazme una noticia de Nicolás Maduro" habria firmado la pieza como Maduro. En
+// español "de" introduce igual al autor que al tema, y con un nombre propio
+// detras el sentido lo decide QUE TIPO DE PIEZA es, no la gramatica:
+//
+//   - "una columna de Óscar Doval"  -> la escribe Óscar Doval
+//   - "una noticia de Óscar Doval"  -> habla de Óscar Doval
+//
+// Asi que el "de" suelto solo cuenta en los tipos que van firmados. Para todo
+// lo demas hace falta decirlo: "firma: X", "firmada por X".
+const AUTORIA_EXPLICITA = new RegExp(
+  "\\b(?:firmad[ao]\\s+por|firma\\s*:\\s*|firma\\s+|escrit[ao]\\s+por)\\s+(" +
+  NOMBRE_FIRMA + ")");
+const AUTORIA_IMPLICITA = new RegExp("\\b(?:de|por)\\s+(" + NOMBRE_FIRMA + ")");
+
+// Los tipos que no se publican sin nombre y apellido. El editorial no entra:
+// lo firma la redaccion por definicion, que es lo que lo separa de una columna.
+const TIPOS_FIRMADOS = ["Opinión", "Investigación"];
+
+function _firma(texto, tipo) {
+  const t = String(texto || "");
+  const m = AUTORIA_EXPLICITA.exec(t);
+  if (m) return m;
+  return TIPOS_FIRMADOS.indexOf(tipo) >= 0 ? AUTORIA_IMPLICITA.exec(t) : null;
+}
+
+function autorDelPedido(texto, tipo) {
+  const m = _firma(texto, tipo);
+  return m ? m[1].trim() : "";
+}
+
+// El texto sin la parte de la firma. Hay que quitarla antes de calcular el
+// tema: "Óscar Doval" dentro de la consulta busca notas SOBRE Óscar Doval, que
+// es lo contrario de lo que se pidio.
+function sinLaFirma(texto, tipo) {
+  const original = String(texto || "");
+  const m = _firma(original, tipo);
+  if (!m) return original;
+  return (original.slice(0, m.index) + " " + original.slice(m.index + m[0].length))
+    .replace(/\s{2,}/g, " ").trim();
+}
+
 // Que tipo de pieza se pidio. La palabra viaja aparte del tema porque
 // temaDelPedido() se la come al recortar: "redactame un articulo sobre X" deja
 // "X", y sin esto el tipo se perdia y salia una noticia.
@@ -1656,7 +1719,7 @@ async function comandoCaptura(env, chatId, msg) {
     : "⚠️ No pude procesar la imagen. Vuelve a intentarlo en un momento.");
 }
 
-async function comandoNota(env, chatId, text, quien, tipo) {
+async function comandoNota(env, chatId, text, quien, tipo, autor) {
   if (!enLaRedaccion(env, chatId)) {
     await sendMessage(env, chatId,
       "Este comando es solo para la redacción. Si necesitas acceso, pide que " +
@@ -1695,7 +1758,7 @@ async function comandoNota(env, chatId, text, quien, tipo) {
   // lo pide por su nombre ("un análisis de", "una editorial sobre").
   const pedido = tipo || "Noticia";
   const ok = await dispararNota(env, chatId, quien, Object.assign(
-    { tipo: pedido },
+    { tipo: pedido, autor: autor || "" },
     enlace
       ? { enlace: enlace, encargo: resto.replace(enlace, "").trim() }
       : { enlace: resto, encargo: "" }));
