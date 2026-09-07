@@ -91,6 +91,11 @@ const WELCOME =
 // este código a partir de fuentes duras; la IA solo redacta la prosa.
 // ---------------------------------------------------------------------------
 const ENTORNO_CRON = "0 12 * * 5"; // viernes 12:00 UTC = 8:00 a.m. VET
+// Las dos tandas del medio, de lunes a viernes:
+//   12:00 UTC = 8:00 a.m. VET   18:00 UTC = 2:00 p.m. VET
+// Van en UNA sola expresion y no en dos para no gastar dos disparadores de los
+// cinco que da el plan gratuito de Cloudflare.
+const DIARIO_CRON = "0 12,18 * * 1-5";
 // Repo donde vive el workflow que dibuja las laminas (Chrome headless no corre
 // en un Worker, asi que el render se delega a GitHub Actions).
 const GITHUB_REPO = "saulbenarroch-debug/telegram-finance-bot";
@@ -231,9 +236,20 @@ export default {
   //  - "0 */3 * * *" ingiere noticias y tasas al historial.
   //  - ENTORNO_CRON (viernes 8:00 a.m. VET) prearma el newsletter semanal y lo
   //    deja en KV. No se envía a nadie: queda listo para cuando lo pidan.
+  //  - DIARIO_CRON (12:00 y 18:00 UTC, L-V) lanza la tanda del medio.
+  //
+  // OJO AL ORDEN: los viernes a las 12:00 coinciden ENTORNO_CRON y DIARIO_CRON,
+  // pero Cloudflare entrega un evento por cada expresion, con su event.cron, asi
+  // que no se pisan. Lo que no se puede es cambiar estos if por horas: el
+  // viernes se perderia una de las dos.
   async scheduled(event, env, ctx) {
-    if (event.cron === ENTORNO_CRON) ctx.waitUntil(getEntorno(env, true));
-    else ctx.waitUntil(ingest(env));
+    if (event.cron === DIARIO_CRON) {
+      ctx.waitUntil(dispararTanda(env, event.scheduledTime));
+    } else if (event.cron === ENTORNO_CRON) {
+      ctx.waitUntil(getEntorno(env, true));
+    } else {
+      ctx.waitUntil(ingest(env));
+    }
   },
 };
 
@@ -1661,13 +1677,15 @@ async function avisarBoton(env, id, texto) {
 // Un solo sitio que dispara nota.yml. Antes estaba escrito dentro de
 // comandoNota y al llegar las capturas habria hecho falta una segunda copia;
 // hoy mismo un nombre calculado en dos sitios distintos ya costo una corrida.
-async function dispararNota(env, chatId, quien, extra) {
+// Un solo sitio que habla con la API de Actions. Lo pedia el comentario de
+// arriba y ahora hay dos workflows que disparar: nota.yml a peticion y
+// diario.yml por reloj.
+async function dispararWorkflow(env, archivo, inputs) {
   if (!env.GITHUB_PAT) return false;
-  const nombre = [quien && quien.first_name, quien && quien.last_name]
-    .filter(Boolean).join(" ") || String(chatId);
   try {
     const r = await fetch(
-      "https://api.github.com/repos/" + REPO_MEDIO + "/actions/workflows/nota.yml/dispatches",
+      "https://api.github.com/repos/" + REPO_MEDIO +
+      "/actions/workflows/" + archivo + "/dispatches",
       {
         method: "POST",
         headers: {
@@ -1677,19 +1695,53 @@ async function dispararNota(env, chatId, quien, extra) {
           "User-Agent": "sureconomics-bot",
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          ref: "main",
-          // chat: para que el borrador vuelva por donde se pidio, no solo al correo.
-          inputs: Object.assign(
-            { enlace: "", foto: "", encargo: "", quien: nombre, tipo: "Noticia", chat: String(chatId) },
-            extra),
-        }),
+        body: JSON.stringify({ ref: "main", inputs: inputs }),
       }
     );
     return r.status === 204; // GitHub responde 204 sin cuerpo cuando acepta
   } catch {
     return false;
   }
+}
+
+async function dispararNota(env, chatId, quien, extra) {
+  const nombre = [quien && quien.first_name, quien && quien.last_name]
+    .filter(Boolean).join(" ") || String(chatId);
+  return dispararWorkflow(env, "nota.yml", Object.assign(
+    // chat: para que el borrador vuelva por donde se pidio, no solo al correo.
+    { enlace: "", foto: "", encargo: "", quien: nombre, tipo: "Noticia",
+      chat: String(chatId) },
+    extra));
+}
+
+// EL RELOJ DE LAS TANDAS. Las 8:00 a.m. y las 2:00 p.m. de Venezuela.
+//
+// POR QUE NO BASTA EL "schedule" DE GITHUB, que sigue puesto. Llega tarde y no
+// poco: medido el 01/09/2026, el de las 12:00 UTC llego a las 16:22 y el de las
+// 18:00 a las 20:53. El 04/09 el de las 18:00 aparecio a las 20:37. Para un
+// medio que titula "la tanda de la mañana", cuatro horas tarde no es un retraso,
+// es otra cosa.
+//
+// El cron de Cloudflare si es puntual, y ademas ya estaba aqui: este Worker
+// tiene el PAT, sabe hablar con Actions y corre crons desde el primer dia. No
+// hace falta cron-job.org ni una credencial mas que mantener.
+//
+// EL "schedule" DE GITHUB SE QUEDA COMO RED. La guardia de diario.yml corre
+// siempre ante un disparo pedido y salta el del reloj si esa tanda ya salio:
+// asi que si Cloudflare falla, el de GitHub llega tarde pero llega, y si
+// Cloudflare funciona, el de GitHub se descarta solo. No hay que elegir.
+async function dispararTanda(env, cuando) {
+  // LA HORA SALE DE scheduledTime Y NO DEL RELOJ. Es la hora a la que TOCABA
+  // correr, no a la que se ejecuta: si un dia la entrega se retrasa, la tanda
+  // sigue etiquetandose bien. Es la misma leccion que dejo github.event.schedule
+  // en la guardia, y ahi costo una tanda mal etiquetada.
+  const hora = new Date(cuando).getUTCHours();
+  const tanda = hora < 15 ? "manana" : "tarde";
+  const ok = await dispararWorkflow(env, "diario.yml",
+    { tanda: tanda, piezas: "6", sin_subir: "false" });
+  console.log("tanda " + tanda + " (" + hora + ":00 UTC): " +
+              (ok ? "lanzada" : "NO se pudo lanzar"));
+  return ok;
 }
 
 // Una captura de pantalla mandada al bot. Se coge la de MAYOR resolucion:

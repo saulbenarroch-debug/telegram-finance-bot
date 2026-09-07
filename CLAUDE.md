@@ -19,7 +19,7 @@ Objetivo a futuro: abrirlo al público (multiusuario, bilingüe).
 |---|---|---|---|---|
 | 1 | Resumen 2x/día (ES+EN) | `bot.py` | GitHub Actions `news.yml` | 10:00 y 16:00 VET |
 | 2 | Alertas de alto impacto | `breaking.py` | Actions `breaking.yml` | cada hora |
-| 3 | Bot conversacional | `cloudflare-worker/worker.js` | Cloudflare Worker | webhook + cron 3h |
+| 3 | Bot conversacional **y reloj del medio** | `cloudflare-worker/worker.js` | Cloudflare Worker | webhook + cron 3h + tandas 8:00 y 14:00 VET |
 | 4 | "Entorno en Viñetas" (newsletter semanal + 4 láminas) | `worker.js` + `entorno/` | Worker + Actions `entorno.yml` | **a pedido** |
 | 5 | "Al Cierre" (láminas diarias de cierre, Rendigroup) | `al-cierre/` | Actions `al-cierre.yml` | 5:30 pm VET |
 
@@ -37,9 +37,24 @@ Ver [docs/ARQUITECTURA.md](docs/ARQUITECTURA.md) para el detalle de cada uno.
 3. **Degradación suave.** Si la IA falla, el mensaje sale igual con titulares y
    enlaces. Si una fuente RSS cae, no tumba a las demás. Si un destinatario
    bloqueó al bot, los otros siguen recibiendo. Mantener ese patrón.
-4. **Nada de `schedule:` de GitHub Actions.** Llegaba tarde y se saltaba
-   corridas. Todos los workflows son `workflow_dispatch` y los dispara
-   cron-job.org. No "arregles" esto volviendo a poner `schedule`.
+4. **El reloj nunca es `schedule:` de GitHub Actions.** Llega tarde y no poco:
+   medido el 01/09/2026, el cron de las 12:00 UTC llegó a las 16:22 y el de las
+   18:00 a las 20:53; el 04/09 el de las 18:00 apareció a las 20:37. Para algo
+   que se titula "la tanda de la mañana", cuatro horas tarde no es un retraso.
+
+   Los workflows son `workflow_dispatch` y los dispara un reloj de fuera:
+   - **Este repo:** cron-job.org (configurado a mano en su web, sin API).
+   - **El medio (`sureconomics-medio`):** el **cron del propio Worker**
+     (`DIARIO_CRON` en `worker.js`, desplegado por `CRONS` en
+     `scripts/deploy_worker.py`). Se eligió sobre cron-job.org porque el Worker
+     ya tenía el `GITHUB_PAT`, ya sabía hablar con la API de Actions y ya corría
+     crons: cero cuentas nuevas y cero credenciales que mantener.
+
+   `diario.yml` **sí conserva su `schedule:`, y a propósito**: su job `guardia`
+   corre siempre ante un disparo pedido y salta el del reloj si esa tanda ya
+   salió. Si Cloudflare falla, el de GitHub llega tarde pero llega; si
+   Cloudflare funciona, el de GitHub se descarta solo. Eso no es volver a poner
+   `schedule` como reloj: es dejarlo de red.
 5. **No hay envío programado del newsletter**, por decisión del dueño del
    proyecto. El cron del viernes solo prearma la edición en caché.
 
