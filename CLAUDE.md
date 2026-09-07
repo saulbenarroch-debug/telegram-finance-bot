@@ -23,7 +23,67 @@ Objetivo a futuro: abrirlo al público (multiusuario, bilingüe).
 | 4 | "Entorno en Viñetas" (newsletter semanal + 4 láminas) | `worker.js` + `entorno/` | Worker + Actions `entorno.yml` | **a pedido** |
 | 5 | "Al Cierre" (láminas diarias de cierre, Rendigroup) | `al-cierre/` | Actions `al-cierre.yml` | 5:30 pm VET |
 
+| 6 | **Puerta de la redacción de SurEconomics** | `worker.js` | Worker | a petición |
+
 Ver [docs/ARQUITECTURA.md](docs/ARQUITECTURA.md) para el detalle de cada uno.
+
+## La puerta del medio (subsistema 6)
+
+Este bot es por donde la redacción le pide piezas al **motor**, que vive en otro
+repo (`C:\Users\saulb\sureconomics-medio`, con su propio CLAUDE.md). Aquí solo
+está la puerta: entender qué se pide y disparar el workflow. **Nada se redacta en
+este repo.**
+
+**Quién puede.** Solo los chat id de `REDACCION_IDS` (`enLaRedaccion()`). Sin eso,
+cualquiera que dé con el bot gasta cuota de IA y crea borradores en el panel, y
+en Telegram cualquier miembro de un grupo puede añadir a otro.
+
+**Qué entiende.** `/nota` acepta un enlace, un tema escrito a mano, una captura
+de pantalla o un enlace de X o de Instagram. Y también se pide hablando:
+
+```
+redáctame un artículo sobre el acuerdo petrolero
+redacta una columna de Óscar Doval sobre el crudo
+hazme un reportaje del litio
+```
+
+Tres piezas hacen eso, y el ORDEN entre ellas importa:
+
+1. `tipoDelPedido()` — la palabra ("artículo", "columna", "reportaje") sale de
+   `TIPOS_PEDIDO`, que es la misma tabla de la que se construye el patrón: así
+   añadir un tipo no puede dejarlos desincronizados.
+2. `autorDelPedido()` — va **después**, porque el tipo decide si un «de Fulano»
+   es la firma o el tema.
+3. `temaDelPedido()` — sobre lo que queda, ya sin el verbo ni la firma.
+
+### Lo que hay que saber antes de tocarlo
+
+- **El patrón es estrecho a propósito.** Exige un verbo en imperativo pegado a la
+  palabra del tipo. Con algo más suelto se dispararía una corrida de Actions cada
+  vez que alguien pregunte «¿qué noticias hay de Chevron?», que es la pregunta
+  más común que recibe el bot. Falso negativo: la persona escribe `/nota`. Falso
+  positivo: se gasta una corrida y aparece un borrador que nadie pidió.
+- **Se compara sin tildes, pero se recorta sobre el original.** El primer patrón
+  no reconocía «redáctame», que es literalmente como se pidió. Y las tildes se
+  conservan en lo que viaja: «Maria Corina Machado» sin tilde busca peor, y una
+  firma se publica.
+- **«De» no basta como señal de autoría.** «Una noticia de Nicolás Maduro» habría
+  firmado la pieza como Maduro: en español «de» introduce igual al autor que al
+  tema. El «de» suelto solo cuenta en los tipos que van firmados (Opinión,
+  Investigación); para el resto hace falta «firma: X». Y se exigen dos palabras
+  en mayúscula: con una sola, «una columna de Venezuela» firmaba como
+  «Venezuela».
+- **`autor` y `quien` no son lo mismo.** `quien` es quien encarga y solo sale en
+  el correo interno; `autor` es quien FIRMA en el sitio.
+- **El enlace no cabe en `callback_data`** (64 bytes). Los botones de la franja
+  dudosa llevan solo su número y el Worker saca la dirección del texto del propio
+  mensaje. Así no hay estado que caduque ni que limpiar.
+- **El asistente de consultas ve los enlaces de las noticias.** Antes no se los
+  pasábamos y, cuando alguien pedía «dame la fuente para el /nota», no podía
+  darla: no la había visto. Es justo el caso en que un modelo se inventa una URL
+  con buena pinta.
+- **Un solo sitio habla con la API de Actions** (`dispararWorkflow`). Hay dos
+  workflows que disparar: `nota.yml` a petición y `diario.yml` por reloj.
 
 ## Reglas de oro (no negociables)
 
@@ -170,9 +230,17 @@ Sin Python global en Windows: hay un runtime portátil en `.pyruntime/`
    quites ese paso.
 7. **`al-cierre` hay que correrlo después del cierre de NY (4:00 pm VET)**;
    antes, los índices USA dan valores intradía.
-8. **Fuentes que no responden** (403/TLS desde fuera): bancaynegocios,
-   finanzasdigital, lapatilla, eleconomista.com.mx, portafolio.co, y el feed de
-   sección de El Cronista (404). No las vuelvas a agregar sin verificar.
+8. **Fuentes que no responden** (403/TLS desde fuera): finanzasdigital,
+   lapatilla, portafolio.co, y el feed de sección de El Cronista (404). No las
+   vuelvas a agregar sin verificar.
+
+   **Y hay que probar el RSS y el ARTÍCULO por separado**, porque no siempre
+   caen juntos. `bancaynegocios.com` estaba en esta lista y era media verdad: su
+   feed sí está muerto (`/feed/` y `/rss` cierran la conexión), pero sus
+   artículos se leen sin problema, y con esa entrada nos perdimos la única
+   cobertura de las licencias de la OFAC sobre minería. En el motor está en
+   `REFERENCIA` —se busca, no se sindica— y no en `MEDIOS`. Lo mismo pasa con
+   `eleconomista.com.mx`, que hoy se lee bien.
 9. **Feedparser/urllib NO traen timeout:** una fuente que acepta la conexión y
    luego **no responde** (no un 403, un cuelgue) trababa el job ~15 min y lo
    hacía fallar. `bot.py` fija `socket.setdefaulttimeout(25)` y los workflows
