@@ -285,7 +285,8 @@ async function handleUpdate(update, env) {
   // que el bot se negaba. Solo cuenta para la redaccion: a cualquier otro se le
   // responde como siempre.
   if (enLaRedaccion(env, chatId) && esPedidoNota(text)) {
-    await comandoNota(env, chatId, "/nota " + temaDelPedido(text), msg.from);
+    await comandoNota(env, chatId, "/nota " + temaDelPedido(text), msg.from,
+                      tipoDelPedido(text));
     return;
   }
   // Actualizar el IPC del BCV a mano: "/ipc 13,8 129,8 junio 2026".
@@ -1462,10 +1463,28 @@ async function enviarEntorno(env, chatId, force) {
 // es la pregunta mas comun que recibe el bot. Falso negativo: la persona escribe
 // /nota. Falso positivo: se gasta una corrida y aparece un borrador que nadie
 // pidio.
+// Como llama la gente a cada tipo. La palabra que se escribe nunca es el nombre
+// interno: se pide "un articulo", "una columna", "un reportaje". El nombre
+// canonico -con sus tildes- es el que entiende nota.py.
+//
+// 'articulo' es Análisis y no Opinión, aunque el prompt de opinion se titule
+// "Articulo de opinion": en el sitio ese formato se llama 'articulo' y es el que
+// Edicion pide cuando dice articulo. Una columna firmada se pide por su nombre.
+const TIPOS_PEDIDO = {
+  nota: "Noticia", noticia: "Noticia", pieza: "Noticia",
+  articulo: "Análisis", analisis: "Análisis",
+  editorial: "Editorial",
+  columna: "Opinión", opinion: "Opinión",
+  reportaje: "Investigación", informe: "Investigación",
+  investigacion: "Investigación",
+  explicador: "Educación",
+};
+
 const PEDIDO_NOTA = new RegExp(
   "^\\s*(?:me\\s+)?(?:puedes\\s+|podrias\\s+|porfa\\s+)?" +
   "(redact|escrib|haz(?:me)?|hac(?:me)?|arma(?:me)?|prepara(?:me)?)\\w*" +
-  "(?:me)?\\s+(?:una?\\s+|la\\s+|el\\s+)?(nota|noticia|pieza)\\b",
+  "(?:me)?\\s+(?:una?\\s+|la\\s+|el\\s+)?(" +
+  Object.keys(TIPOS_PEDIDO).join("|") + ")\\b",
   "i");
 
 // Sin tildes, LETRA A LETRA. Tiene que conservar las posiciones para poder
@@ -1481,6 +1500,14 @@ function sinTildes(s) {
 
 function esPedidoNota(texto) {
   return PEDIDO_NOTA.test(sinTildes(texto));
+}
+
+// Que tipo de pieza se pidio. La palabra viaja aparte del tema porque
+// temaDelPedido() se la come al recortar: "redactame un articulo sobre X" deja
+// "X", y sin esto el tipo se perdia y salia una noticia.
+function tipoDelPedido(texto) {
+  const m = PEDIDO_NOTA.exec(sinTildes(texto));
+  return (m && TIPOS_PEDIDO[m[2].toLowerCase()]) || "Noticia";
 }
 
 // Lo que queda del encargo una vez quitado el "redactame una noticia de".
@@ -1629,7 +1656,7 @@ async function comandoCaptura(env, chatId, msg) {
     : "⚠️ No pude procesar la imagen. Vuelve a intentarlo en un momento.");
 }
 
-async function comandoNota(env, chatId, text, quien) {
+async function comandoNota(env, chatId, text, quien, tipo) {
   if (!enLaRedaccion(env, chatId)) {
     await sendMessage(env, chatId,
       "Este comando es solo para la redacción. Si necesitas acceso, pide que " +
@@ -1664,18 +1691,23 @@ async function comandoNota(env, chatId, text, quien) {
   // en los dos sentidos: partir mal la frase estropea la busqueda, y adivinar
   // una instruccion que nadie dio cambia la pieza. nota.py busca con la frase
   // entera y ahi mismo detecta el "igual" si aparece.
-  const ok = await dispararNota(env, chatId, quien,
+  // El tipo por defecto sigue siendo Noticia. Solo cambia cuando quien escribe
+  // lo pide por su nombre ("un análisis de", "una editorial sobre").
+  const pedido = tipo || "Noticia";
+  const ok = await dispararNota(env, chatId, quien, Object.assign(
+    { tipo: pedido },
     enlace
       ? { enlace: enlace, encargo: resto.replace(enlace, "").trim() }
-      : { enlace: resto, encargo: "" });
+      : { enlace: resto, encargo: "" }));
 
+  const comoSale = pedido === "Noticia" ? "" : " Sale como " + pedido + ".";
   const aviso = enlace
     ? "📝 A ello. Paso la fuente por el expediente, las cifras y el auditor."
     : "🔎 A ello. Busco quién lo cuenta en la lista de medios, cruzo hasta tres " +
       "y lo paso todo por el expediente, las cifras y el auditor.";
   await sendMessage(env, chatId, ok
-    ? aviso + " Te lo devuelvo aquí en unos minutos. También va al correo. " +
-      "Nada se publica solo."
+    ? aviso + comoSale + " Te lo devuelvo aquí en unos minutos. También va al " +
+      "correo. Nada se publica solo."
     : "⚠️ No pude lanzar la redacción. Vuelve a intentarlo en un momento.");
 }
 
