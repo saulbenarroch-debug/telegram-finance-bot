@@ -1740,8 +1740,12 @@ async function dispararTanda(env, cuando) {
   // en la guardia, y ahi costo una tanda mal etiquetada.
   const hora = new Date(cuando).getUTCHours();
   const tanda = hora < 15 ? "manana" : "tarde";
+  // origen=reloj: la guardia de diario.yml lo trata como al schedule y no
+  // repite una tanda que ya salio. Sin esto, una tanda lanzada a mano mas la
+  // del reloj daban doce borradores, porque la guardia solo frenaba los
+  // 'schedule' y este cron dispara por workflow_dispatch igual que una persona.
   const ok = await dispararWorkflow(env, "diario.yml",
-    { tanda: tanda, piezas: "6", sin_subir: "false" });
+    { tanda: tanda, piezas: "6", sin_subir: "false", origen: "reloj" });
   console.log("tanda " + tanda + " (" + hora + ":00 UTC): " +
               (ok ? "lanzada" : "NO se pudo lanzar"));
   return ok;
