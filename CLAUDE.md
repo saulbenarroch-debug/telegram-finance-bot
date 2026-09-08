@@ -20,9 +20,8 @@ Objetivo a futuro: abrirlo al público (multiusuario, bilingüe).
 | 1 | Resumen 2x/día (ES+EN) | `bot.py` | GitHub Actions `news.yml` | 10:00 y 16:00 VET |
 | 2 | Alertas de alto impacto | `breaking.py` | Actions `breaking.yml` | cada hora |
 | 3 | Bot conversacional **y reloj del medio** | `cloudflare-worker/worker.js` | Cloudflare Worker | webhook + cron 3h + tandas 8:00 y 14:00 VET |
-| 4 | "Entorno en Viñetas" (newsletter semanal + 4 láminas) | `worker.js` + `entorno/` | Worker + Actions `entorno.yml` | **a pedido** |
+| 4 | "Entorno en Viñetas" (newsletter semanal + 4 láminas) | `worker.js` + `entorno/` | Worker + Actions `entorno.yml` | **a pedido**; se prearma los lunes |
 | 5 | "Al Cierre" (láminas diarias de cierre, Rendigroup) | `al-cierre/` | Actions `al-cierre.yml` | 5:30 pm VET |
-
 | 6 | **Puerta de la redacción de SurEconomics** | `worker.js` | Worker | a petición |
 
 Ver [docs/ARQUITECTURA.md](docs/ARQUITECTURA.md) para el detalle de cada uno.
@@ -116,7 +115,10 @@ Tres piezas hacen eso, y el ORDEN entre ellas importa:
    Cloudflare funciona, el de GitHub se descarta solo. Eso no es volver a poner
    `schedule` como reloj: es dejarlo de red.
 5. **No hay envío programado del newsletter**, por decisión del dueño del
-   proyecto. El cron del viernes solo prearma la edición en caché.
+   proyecto. El cron del **lunes** solo prearma la edición en caché.
+   Se movió de viernes a lunes el 08/09/2026, cuando el newsletter pasó a
+   publicarse los lunes: prearmarlo el viernes lo dejaba con tres días
+   encima, que en economía es media vida.
 
 ## Voz editorial (Sureconomics)
 
