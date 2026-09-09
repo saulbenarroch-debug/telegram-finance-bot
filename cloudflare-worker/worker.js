@@ -1637,9 +1637,50 @@ async function comandoBoton(env, cq) {
   // publicada. Solo cambia si se manda o no la instruccion "igual".
   const partes = String(cq.data || "").split(":");
   const n = parseInt(partes[1], 10);
-  const enlaces = String((cq.message && cq.message.text) || "")
-    .match(/\/nota\s+(https?:\/\/\S+)/g) || [];
-  const elegido = (enlaces[n - 1] || "").replace(/^\/nota\s+/, "");
+
+  // "subir:<corrida>" NO REDACTA NADA. La pieza ya se escribio y quedo en el
+  // artefacto de aquella corrida: subir_borrador.yml se lo baja y lo sube tal
+  // cual. Es lo que se quiere cuando la memoria da algo por repetido y no lo
+  // es: la persona acaba de leer el borrador entero aqui y lo unico que
+  // discute es el veredicto, asi que reescribirlo le devolveria un texto
+  // distinto del que aprobo.
+  //
+  // Va antes que lo demas porque no necesita enlace ninguno.
+  if (partes[0] === "subir") {
+    const corrida = String(partes[1] || "").replace(/\D/g, "");
+    if (!corrida) {
+      await responder("No sé de qué corrida es ese borrador.");
+      return;
+    }
+    await responder("La subo igual.");
+    const subio = await dispararWorkflow(env, "subir_borrador.yml",
+      { corrida: corrida, chat: String(chatId) });
+    await sendMessage(env, chatId, subio
+      ? "📤 Recuperando ese borrador y subiéndolo al panel. Va marcado como parecido a otro."
+      : "⚠️ No pude lanzar la subida. Vuelve a intentarlo en un momento.");
+    return;
+  }
+
+  // DE DONDE SALE LA DIRECCION. Por dos vias, y las dos hacen falta.
+  //
+  // 1. Las lineas "/nota <url>" del texto. Es lo que llevan los avisos con
+  //    varios candidatos, donde ademas el ORDEN importa: el boton dice "el 2"
+  //    y hay que coger el segundo.
+  // 2. Los enlaces puestos como <a href>. Telegram manda su direccion en
+  //    entities[].url y NO dentro de text, asi que el aviso de "repetida"
+  //    puede pasar la fuente sin enseñar ningun comando: la persona ve dos
+  //    botones y ya. Solo cuentan los 'text_link' -los que llevan href-, que
+  //    es lo que deja fuera la url del sitio que va escrita a la vista.
+  const texto = String((cq.message && cq.message.text) || "");
+  const enlaces = texto.match(/\/nota\s+(https?:\/\/\S+)/g) || [];
+  const conHref = ((cq.message && cq.message.entities) || [])
+    .filter((e) => e && e.type === "text_link" && e.url)
+    .map((e) => e.url);
+  const elegido =
+    (enlaces[n - 1] || "").replace(/^\/nota\s+/, "") ||
+    conHref[n - 1] ||
+    conHref[0] ||
+    "";
   const forzar = partes[0] === "forzar";
   if (!elegido) {
     // Pasa si el mensaje es viejo y se edito, o si el boton no casa con el
