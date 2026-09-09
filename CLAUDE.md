@@ -74,15 +74,26 @@ Tres piezas hacen eso, y el ORDEN entre ellas importa:
   «Venezuela».
 - **`autor` y `quien` no son lo mismo.** `quien` es quien encarga y solo sale en
   el correo interno; `autor` es quien FIRMA en el sitio.
-- **El enlace no cabe en `callback_data`** (64 bytes). Los botones de la franja
-  dudosa llevan solo su número y el Worker saca la dirección del texto del propio
-  mensaje. Así no hay estado que caduque ni que limpiar.
+- **El enlace no cabe en `callback_data`** (64 bytes), así que los botones llevan
+  solo un número y el Worker recupera la dirección del propio mensaje. Así no hay
+  estado que caduque ni que limpiar. **Hay dos sitios de donde sacarla y los dos
+  hacen falta:** las líneas `/nota <url>` del texto, para los avisos con varios
+  candidatos numerados donde el orden importa; y `entities[].url`, porque
+  Telegram manda la dirección de un `<a href>` ahí y **no** dentro de `text`. Lo
+  segundo es lo que permite que el aviso de «repetida» pase la fuente sin enseñar
+  ningún comando: la persona ve dos botones y ya.
+- **`subir:<corrida>` no redacta nada.** Dispara `subir_borrador.yml` en el repo
+  del medio, que se baja el artefacto de aquella corrida y sube el texto **exacto**
+  que la persona ya leyó. Es distinto de `forzar:N`, que reescribe desde cero y
+  devuelve un texto parecido pero no el que aprobó. El número de corrida sí cabe
+  en `callback_data`: son once dígitos.
 - **El asistente de consultas ve los enlaces de las noticias.** Antes no se los
   pasábamos y, cuando alguien pedía «dame la fuente para el /nota», no podía
   darla: no la había visto. Es justo el caso en que un modelo se inventa una URL
   con buena pinta.
-- **Un solo sitio habla con la API de Actions** (`dispararWorkflow`). Hay dos
-  workflows que disparar: `nota.yml` a petición y `diario.yml` por reloj.
+- **Un solo sitio habla con la API de Actions** (`dispararWorkflow`). Hay tres
+  workflows que disparar: `nota.yml` a petición, `diario.yml` por reloj y
+  `subir_borrador.yml` cuando alguien toca «Subirla igual».
 
 ## Reglas de oro (no negociables)
 
