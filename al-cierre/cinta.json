@@ -1,6 +1,6 @@
 {
-  "actualizado": "2026-09-09T21:31:31+00:00",
-  "fecha_cierre": "2026-09-09",
+  "actualizado": "2026-09-10T21:30:31+00:00",
+  "fecha_cierre": "2026-09-10",
   "valores": [
     {
       "clave": "ves_usd",
@@ -23,8 +23,8 @@
     {
       "clave": "ibc",
       "etiqueta": "IBC",
-      "valor": 6336.86,
-      "variacion": -0.59,
+      "valor": 6378.42,
+      "variacion": 0.66,
       "unidad": "pts",
       "fuente": "Bolsa de Valores de Caracas",
       "url_fuente": "https://www.bolsadecaracas.com/"
