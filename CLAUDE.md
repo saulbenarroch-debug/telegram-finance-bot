@@ -258,7 +258,28 @@ Sin Python global en Windows: hay un runtime portátil en `.pyruntime/`
    luego **no responde** (no un 403, un cuelgue) trababa el job ~15 min y lo
    hacía fallar. `bot.py` fija `socket.setdefaulttimeout(25)` y los workflows
    tienen `timeout-minutes`. No quites ninguno de los dos.
-10. **"The job was not acquired by Runner" + "Internal server error" NO es bug
+10. **El Worker muere sin excepción si `ctx.waitUntil()` pasa de ~30 s, y eso
+    no deja rastro en ningún sitio.** No salta el `catch`, no hay mensaje de
+    error, no hay log: la persona ve el "dame unos segundos" y silencio para
+    siempre. Armar el newsletter tarda **26 s medidos**, más enviar cinco
+    mensajes, más disparar las láminas. Se pasaba.
+
+    Lo que lo destapó: `entorno.yml`, que se dispara al FINAL del flujo, llevaba
+    once días sin correr. Si algo que va al final no ocurre nunca, sospecha del
+    tiempo antes que del código.
+
+    **Los crons no tienen ese problema** —Cloudflare les da quince minutos, no
+    treinta segundos—, así que la regla es: lo pesado lo arma el cron y lo deja
+    en KV; el chat solo sirve lo que ya está armado.
+11. **Un TTL más corto que su cron es una bomba de relojería.** `ENTORNO_TTL`
+    estaba en 6 horas y el cron que prearma el newsletter corre los lunes: el
+    newsletter funcionaba de 12:00 a 18:00 del lunes y el resto de la semana
+    intentaba rearmarse de cero y moría. `ENTORNO_MAX_EDAD`, que avisa a los 8
+    días, siempre dio por hecho que la edición del lunes valía la semana; el TTL
+    decía otra cosa. **Si tocas uno, mira el otro.**
+12. **`sendMessage()` no manda `parse_mode`**: un `<b>` sale a la vista. El HTML
+    va por `sendHtml()`, que es por donde viaja el newsletter.
+13. **"The job was not acquired by Runner" + "Internal server error" NO es bug
     del código:** es GitHub que no asigna runner, casi siempre por **minutos de
     Actions agotados** (repo privado = 2.000 min/mes gratis; con presupuesto $0 y
     "stop usage" se bloquean las corridas). La corrida dura ~15 min "intentando"

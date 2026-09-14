@@ -104,7 +104,29 @@ const DIARIO_CRON = "0 12,18 * * 1-5";
 const GITHUB_REPO = "saulbenarroch-debug/telegram-finance-bot";
 // El medio vive en otro repositorio. El mismo PAT llega a los dos.
 const REPO_MEDIO = "saulbenarroch-debug/sureconomics-medio";
-const ENTORNO_TTL = 6 * 60 * 60; // seg. que se reusa una edición ya armada
+// CUÁNTO SE REUSA UNA EDICIÓN YA ARMADA. Es un newsletter SEMANAL: la edición
+// del lunes es la de la semana, y darla el jueves no es servir algo viejo, es
+// servir la que toca. ENTORNO_MAX_EDAD, que avisa a los 8 días, siempre dio por
+// hecho eso; el TTL decía 6 horas y se contradecían.
+//
+// LO QUE COSTABA, medido el 14/09/2026: el cron prearma la edición los lunes a
+// las 12:00 UTC, así que con 6 horas el newsletter estaba servible entre las
+// 12:00 y las 18:00 del lunes y NADA MÁS. El resto de la semana cada petición
+// intentaba rearmarlo de cero, y eso tarda 26 segundos.
+//
+// Veintiséis segundos no caben donde corre esto. Por Telegram el armado va en
+// ctx.waitUntil(), o sea DESPUÉS de haber contestado "ok", y ese contexto lo
+// corta Cloudflare a los ~30 s. Sumando el armado más enviar cinco mensajes más
+// disparar las láminas, se pasa: el Worker muere SIN LANZAR EXCEPCIÓN, así que
+// no salta el catch y no se manda ni el texto ni el aviso de error. Desde el
+// chat se ve como "Armando el Entorno en Viñetas…" y silencio para siempre.
+// Encaja con que entorno.yml, que se dispara al final del todo, llevara once
+// días sin correr.
+//
+// El cron SÍ puede con los 26 s -los disparadores cron de Cloudflare tienen
+// quince minutos, no treinta segundos-, y por eso la solución es que lo que
+// arma el lunes dure la semana entera y nadie tenga que rearmarlo a mano.
+const ENTORNO_TTL = 7 * 24 * 60 * 60; // una semana: lo que dura una edición
 const ENTORNO_MAX_EDAD = 8 * 24 * 60 * 60 * 1000; // ms antes de avisar que está vieja
 
 // Bases de comparación anual (editables por KV: entorno:bases).
@@ -1423,7 +1445,30 @@ async function getEntorno(env, force) {
 }
 
 async function enviarEntorno(env, chatId, force) {
-  await sendMessage(env, chatId, "📰 Armando el Entorno en Viñetas… dame unos segundos.");
+  // SI HAY QUE ARMARLA DE CERO, SE DICE Y SE DICE QUÉ HACER. Armarla tarda unos
+  // 26 s y esto corre en ctx.waitUntil(), que Cloudflare corta a los ~30 s: da
+  // tiempo a armarla y guardarla en KV, pero a veces no a enviarla, y entonces
+  // el Worker muere sin excepción y la persona se queda con el "dame unos
+  // segundos" para siempre. Pasó del 03/09 al 14/09/2026 sin que nadie supiera
+  // por qué.
+  //
+  // Lo bueno es que ese intento NO se pierde: getEntorno() guarda en KV antes
+  // de devolver, así que volver a pedirla la sirve al instante. Por eso el
+  // aviso dice justo eso en vez de dejar a la persona mirando el chat.
+  const enCache = await kvGet(env, "entorno:last", null);
+  const fria = force || !enCache || !enCache.parts ||
+    Date.now() - enCache.ts >= ENTORNO_TTL * 1000;
+  await sendMessage(
+    env,
+    chatId,
+    fria
+      // Sin etiquetas: sendMessage() no manda parse_mode y un <b> saldría a la
+      // vista. El HTML es cosa de sendHtml(), que es por donde va el newsletter.
+      ? "📰 No tengo la edición de esta semana en memoria, así que la armo de " +
+        "cero. Tarda cerca de medio minuto. Si no te llega, vuelve a pedírmela: " +
+        "la segunda vez sale al instante."
+      : "📰 Armando el Entorno en Viñetas… dame unos segundos."
+  );
   let ed;
   try {
     ed = await getEntorno(env, force);
