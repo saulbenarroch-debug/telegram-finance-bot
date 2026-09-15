@@ -105,6 +105,48 @@ jobs:
           done
           echo "Fin de la prueba de candidatos."
 
+      # EL RESPALDO SE PROBABA CON "Responde solo: OK", Y ESO NO PRUEBA NADA.
+      #
+      # El 14/09/2026 Gemini se quedo sin credito y Groq tenia que salvar la
+      # papeleta. Devolvio 413 y el motor no escribio ni una pieza. Un prompt
+      # de dos palabras pasa siempre; el que manda el redactor son unos 30 KB
+      # -00-base.md son 12,5 KB, el prompt del tipo 5, el perfil 5,4, mas el
+      # expediente-, y ese es el que hay que probar.
+      #
+      # Se prueban varios tamaños para saber DONDE esta el corte, no solo que
+      # lo hay. Y se imprime el CUERPO del error: motor/ia.py solo guardaba el
+      # codigo, asi que "Groq respondio 413" no decia si era el tamaño, la
+      # cuota por minuto o la clave.
+      - name: Aguanta Groq un prompt del tamaño real?
+        if: always()
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        run: |
+          if [ -z "$GROQ_API_KEY" ]; then echo "Sin clave, no se prueba."; exit 0; fi
+          for kb in 1 10 20 30 45; do
+            python3 - "$kb" <<'PY'
+          import json, sys
+          kb = int(sys.argv[1])
+          relleno = ("El precio del barril de crudo Brent cerro la semana al alza "
+                     "y el Banco Central publico la tasa oficial del dia. ")
+          texto = (relleno * (kb * 1024 // len(relleno) + 1))[:kb * 1024]
+          json.dump({"model": "openai/gpt-oss-120b", "max_tokens": 20,
+                     "messages": [{"role": "user",
+                                   "content": texto + "\nResponde solo: OK"}]},
+                    open("/tmp/grande.json", "w"))
+          PY
+            codigo=$(curl -s -o /tmp/resp.json -w '%{http_code}' \
+              -H "Authorization: Bearer $GROQ_API_KEY" \
+              -H "Content-Type: application/json" \
+              -d @/tmp/grande.json \
+              https://api.groq.com/openai/v1/chat/completions)
+            echo "--- prompt de ${kb} KB -> HTTP $codigo"
+            if [ "$codigo" != "200" ]; then
+              echo "    $(head -c 400 /tmp/resp.json)"
+            fi
+          done
+          echo "Fin. El tamaño del redactor son ~30 KB: mira ese."
+
       - name: Qué clave de Gemini está usando este repo
         if: always()
         env:
