@@ -99,6 +99,27 @@ const ENTORNO_CRON = "0 12 * * 1"; // lunes 12:00 UTC = 8:00 a.m. VET
 // Van en UNA sola expresion y no en dos para no gastar dos disparadores de los
 // cinco que da el plan gratuito de Cloudflare.
 const DIARIO_CRON = "0 12,18 * * 1-5";
+
+// LA VIGILANCIA, CADA CUARTO DE HORA Y EN HORARIO DE REDACCION.
+//
+// Estaba en el `schedule:` de GitHub pidiendo una ronda cada hora, y lo que
+// hacia de verdad era esto (medido del 16 al 18/09/2026):
+//
+//   tocaba 17:00 -> corrio 17:56     tocaba 23:00 -> corrio 00:53
+//   tocaba 14:00 -> corrio 14:41     tocaba 23:00 -> corrio 00:57
+//
+// O sea: de veinte minutos a casi dos horas tarde, y dos rondas llegando
+// pasada la medianoche, fuera ya de la franja en la que alguien lee el grupo.
+// Una vigilancia con dos horas de retraso no es una vigilancia.
+//
+// De 11:00 a 23:00 UTC = 7:00 a 19:00 en Venezuela, la misma franja que tenia.
+// Fuera de ahi no hay nadie mirando y un aviso que nadie ve solo sirve para que
+// el siguiente se ignore tambien.
+//
+// NO CUESTA CUOTA DE IA: vigilar.py no llama ni a Gemini ni a Tavily, puntua con
+// criterio.py, que es codigo. Son 52 rondas al dia y cada medio recibe una
+// peticion cada cuarto de hora, que es sondeo normal de RSS.
+const VIGILANCIA_CRON = "*/15 11-23 * * 1-5";
 // Repo donde vive el workflow que dibuja las laminas (Chrome headless no corre
 // en un Worker, asi que el render se delega a GitHub Actions).
 const GITHUB_REPO = "saulbenarroch-debug/telegram-finance-bot";
@@ -272,6 +293,15 @@ export default {
       ctx.waitUntil(dispararTanda(env, event.scheduledTime));
     } else if (event.cron === ENTORNO_CRON) {
       ctx.waitUntil(getEntorno(env, true));
+    } else if (event.cron === VIGILANCIA_CRON) {
+      // Solo dispara el workflow y se va: la ronda entera corre en Actions, que
+      // no tiene el limite de ~30 s de ctx.waitUntil() que se llevo por delante
+      // el newsletter el 14/09/2026.
+      //
+      // Ventana de 1 hora con rondas cada 15 minutos: se solapan a proposito.
+      // Un titular que aparezca justo en el borde lo ve la ronda siguiente, y
+      // repetirlo no molesta porque vigilancia_estado.json recuerda lo avisado.
+      ctx.waitUntil(dispararWorkflow(env, "vigilancia.yml", { horas: "1" }));
     } else {
       ctx.waitUntil(ingest(env));
     }
