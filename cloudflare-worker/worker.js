@@ -119,7 +119,17 @@ const DIARIO_CRON = "0 12,18 * * 1-5";
 // NO CUESTA CUOTA DE IA: vigilar.py no llama ni a Gemini ni a Tavily, puntua con
 // criterio.py, que es codigo. Son 52 rondas al dia y cada medio recibe una
 // peticion cada cuarto de hora, que es sondeo normal de RSS.
-const VIGILANCIA_CRON = "*/15 11-23 * * 1-5";
+// OJO A LA LISTA EXPLICITA EN VEZ DE "*/15". Se desplego primero como
+// "*/15 11-23 * * 1-5", Cloudflare lo acepto y lo registro, el codigo
+// desplegado tenia la cadena identica... y no disparo ninguna de las cuatro
+// ventanas siguientes (19:00, 19:15, 19:30 y 19:45 del 18/09/2026). Los tres
+// crones que si funcionan usan paso solo en el campo de la HORA
+// ("0 */3 * * *"); ninguno lo usaba en el de los minutos.
+//
+// No esta demostrado que esa sea la causa -tambien pudo ser que un cron recien
+// creado tarde en activarse-, y por eso queda escrito: si algun dia esto vuelve
+// a fallar, empieza por aqui en vez de repetir la investigacion entera.
+const VIGILANCIA_CRON = "*/15 11,12,13,14,15,16,17,18,19,20,21,22,23 * * 1-5";
 // Repo donde vive el workflow que dibuja las laminas (Chrome headless no corre
 // en un Worker, asi que el render se delega a GitHub Actions).
 const GITHUB_REPO = "saulbenarroch-debug/telegram-finance-bot";
@@ -225,6 +235,14 @@ export default {
       const n = await ingest(env);
       return new Response("ingested " + n);
     }
+    // Que cron disparo el ultimo, para saber si el reloj vive. Ver el comentario
+    // de scheduled().
+    if (url.pathname === "/entorno" && url.searchParams.get("crones") &&
+        url.searchParams.get("key") === env.WEBHOOK_SECRET) {
+      const ultimo = await kvGet(env, "cron:ultimo", null);
+      return new Response(JSON.stringify(ultimo || { aviso: "aun no ha disparado ninguno" }, null, 2),
+        { headers: { "Content-Type": "application/json; charset=utf-8" } });
+    }
     // Endpoint protegido para revisar el newsletter sin pasar por Telegram.
     // /entorno?key=...&force=1 rearma la edición; &datos=1 muestra solo las cifras.
     if (url.pathname === "/entorno" && url.searchParams.get("key") === env.WEBHOOK_SECRET) {
@@ -289,6 +307,13 @@ export default {
   // que no se pisan. Lo que no se puede es cambiar estos if por horas: el
   // lunes se perderia una de las dos.
   async scheduled(event, env, ctx) {
+    // QUE CRON DISPARO Y CUANDO, EN KV. Sin esto, "el cron no salta" y "el cron
+    // salta pero cae en el else" son indistinguibles desde fuera, y el else
+    // ejecuta la ingesta en silencio. El 18/09/2026 costo una tarde averiguar
+    // cual de las dos era. Se lee en /entorno?key=...&crones=1.
+    ctx.waitUntil(kvPut(env, "cron:ultimo", {
+      cron: event.cron, cuando: new Date(event.scheduledTime).toISOString(),
+    }));
     if (event.cron === DIARIO_CRON) {
       ctx.waitUntil(dispararTanda(env, event.scheduledTime));
     } else if (event.cron === ENTORNO_CRON) {

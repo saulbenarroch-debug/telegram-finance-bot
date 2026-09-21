@@ -31,7 +31,7 @@ CRONS = [
     # schedule: de GitHub y llegaba de 20 min a 2 h tarde; dos rondas del
     # 16-18/09/2026 aparecieron pasada la medianoche, cuando ya no hay nadie
     # leyendo. No cuesta cuota de IA: vigilar.py no llama a Gemini ni a Tavily.
-    "*/15 11-23 * * 1-5",
+    "*/15 11,12,13,14,15,16,17,18,19,20,21,22,23 * * 1-5",
 ]
 
 load_dotenv(ENV_PATH)
