@@ -81,6 +81,11 @@ const WELCOME =
   "• <code>/nota &lt;enlace&gt; igual</code> — la escribo aunque ya esté publicada\n" +
   "• <b>Mándame una captura</b> de una noticia y busco el original para " +
   "escribirla. Si me dices «súbela con esta imagen», la uso de portada\n\n" +
+  "<b>3. Hago el post de Instagram</b> de algo YA publicado, sin reescribirlo.\n" +
+  "• <code>/post &lt;enlace&gt;</code> — la lámina de esa pieza\n" +
+  "• Escribe debajo <code>titular:</code>, <code>bajada:</code> o " +
+  "<code>categoría:</code> para poner tú el texto\n" +
+  "• Mándalo como pie de una imagen y la uso de fondo\n\n" +
   "📰 Newsletter semanal: pídeme «dame el entorno en viñetas» (o /entorno). " +
   "Se arma solo los lunes a las 8:00 a.m.\n\n" +
   "Tu chat ID, por si te piden dar de alta: /id";
@@ -349,6 +354,20 @@ async function handleUpdate(update, env) {
   // capturas de Instagram, asi que una foto sin texto no es ruido: es un
   // encargo. Va antes del filtro de abajo, que hasta hoy las tiraba todas.
   if (msg.photo && msg.photo.length) {
+    // UNA FOTO CON PIE "/post" NO ES UNA CAPTURA DE NOTICIA. Es justo lo
+    // contrario: no dice QUE escribir, sino con que imagen dibujar la lamina de
+    // algo que ya esta publicado. Sin esta rama caia en comandoCaptura y el
+    // motor se ponia a buscar de que noticia era la foto, que es lo que hace
+    // con las capturas de Instagram que manda la direccion.
+    //
+    // Se mira aqui y no dentro de comandoCaptura para que el reparto se lea de
+    // un vistazo: foto + /post es un camino, foto a secas es otro.
+    const pie = (msg.caption || "").trim();
+    if (/^\/post(@\S+)?\b/i.test(pie)) {
+      await comandoPost(env, msg.chat.id, pie,
+                        msg.photo[msg.photo.length - 1].file_id);
+      return;
+    }
     await comandoCaptura(env, msg.chat.id, msg);
     return;
   }
@@ -365,6 +384,16 @@ async function handleUpdate(update, env) {
     await sendMessage(env, chatId, "Tu chat ID es: " + chatId);
     return;
   }
+  // Solo la lamina de una pieza YA PUBLICADA: "/post <enlace>".
+  //
+  // VA ANTES QUE /nota A PROPOSITO, aunque no se solapen: si algun dia el
+  // patron de /nota se abre para entender pedidos escritos a mano, "hazme el
+  // post de esta" tiene que seguir cayendo aqui y no disparar una redaccion.
+  if (text.toLowerCase().split(" ")[0].split("@")[0] === "/post") {
+    await comandoPost(env, chatId, text, "");
+    return;
+  }
+
   // Pedir que se redacte una noticia: "/nota https://medio.com/la-nota".
   if (text.toLowerCase().split(" ")[0].split("@")[0] === "/nota") {
     await comandoNota(env, chatId, text, msg.from);
@@ -1761,6 +1790,34 @@ async function comandoBoton(env, cq) {
     return;
   }
 
+  // "post:<id>" TAMPOCO REDACTA NADA. La pieza ya esta publicada: post.yml la
+  // lee del panel y dibuja la lamina. Hasta el 23/09/2026 este boton no
+  // existia y la unica salida del aviso «esa ya esta publicada» era
+  // «Escribirla igual», que rehace la pieza entera y deja un borrador
+  // duplicado que nadie queria, solo para conseguir el post.
+  //
+  // VIAJA EL id Y NO EL slug: en callback_data caben 64 bytes y los slugs del
+  // sitio llegan a 89 caracteres («la-can-y-el-mercosur-declaran-el-estado-de-
+  // emergencia-hidrica-en-la-cuenca-de-la-amazonia»). Un id son tres digitos.
+  //
+  // Va aqui arriba por lo mismo que "subir": no necesita ningun enlace.
+  if (partes[0] === "post") {
+    const pieza = String(partes[1] || "").replace(/\D/g, "");
+    if (!pieza) {
+      await responder("No sé de qué pieza es ese post.");
+      return;
+    }
+    await responder("Te hago el post.");
+    const lanzado = await dispararWorkflow(env, "post.yml",
+      { enlace: pieza, chat: String(chatId) });
+    await sendMessage(env, chatId, lanzado
+      ? "🖼️ Dibujando la lámina de esa pieza. No reescribo nada ni toco el " +
+        "panel.\n\nSi quieres el texto a tu manera, repítelo con /post y el " +
+        "enlace, y escribe debajo «titular:» y «bajada:»."
+      : "⚠️ No pude lanzar el post. Vuelve a intentarlo en un momento.");
+    return;
+  }
+
   // DE DONDE SALE LA DIRECCION. Por dos vias, y las dos hacen falta.
   //
   // 1. Las lineas "/nota <url>" del texto. Es lo que llevan los avisos con
@@ -1917,6 +1974,70 @@ async function comandoCaptura(env, chatId, msg) {
       " Busco la nota original en los medios de la lista y, si aparece, te " +
       "devuelvo el borrador aquí. Si no la encuentro, te lo digo."
     : "⚠️ No pude procesar la imagen. Vuelve a intentarlo en un momento.");
+}
+
+// /post: la lamina de Instagram de una pieza YA PUBLICADA.
+//
+// POR QUE NO ES /nota CON UNA BANDERA. La lamina no necesita el motor: para
+// dibujarla hacen falta titular corto, bajada, categoria e imagen, y para una
+// pieza publicada las cuatro estan ya en el panel. Asi que esto no redacta, no
+// audita, no crea borrador y no gasta cuota de redactor.
+//
+// EL CASO QUE LO PIDIO. Edicion pedia /nota de algo ya publicado, el motor
+// contestaba «esa ya esta publicada» -correcto- y ahi se acababa: el unico
+// boton era «Escribirla igual», que rehace la pieza entera y deja un borrador
+// duplicado que nadie queria, solo para conseguir el post.
+//
+// LO QUE SE PUEDE ESCRIBIR JUNTO AL ENLACE: "titular:", "bajada:" y
+// "categoria:", una por renglon. Acortar un titular es criterio de redes, no un
+// dato que haya que auditar, y quien usa la lamina a diario quiere decidirlo.
+// Iterar aqui cuesta segundos; por /nota costaba reescribir la nota entera.
+async function comandoPost(env, chatId, texto, fotoId) {
+  if (!enLaRedaccion(env, chatId)) {
+    await sendMessage(env, chatId,
+      "Este comando es solo para la redacción. Si necesitas acceso, pide que " +
+      "añadan tu chat ID (" + chatId + ") a la lista.");
+    return;
+  }
+
+  const resto = String(texto || "").replace(/^\/post(@\S+)?\s*/i, "").trim();
+  const enlace = (resto.match(/https?:\/\/\S+/) || [])[0] ||
+    // Sin http tambien vale un slug pelado, que es como queda si alguien copia
+    // solo el final de la direccion. Se coge la primera palabra larga con
+    // guiones: los slugs del sitio los llevan siempre.
+    (resto.match(/^[a-z0-9]+(?:-[a-z0-9]+){2,}/i) || [])[0] || "";
+
+  if (!enlace) {
+    await sendHtml(env, chatId,
+      "Dime de qué pieza hago el post:\n" +
+      "<code>/post https://www.sureconomics.com/la-pieza</code>\n\n" +
+      "Tiene que estar ya publicada. Si quieres el texto a tu manera, " +
+      "escríbelo debajo, uno por renglón:\n" +
+      "<code>titular: La Amazonía se queda sin agua</code>\n" +
+      "<code>bajada: CAN y Mercosur declaran la emergencia</code>\n" +
+      "<code>categoría: LATINOAMÉRICA</code>\n\n" +
+      "Y si mandas una imagen con eso de pie de foto, la uso de fondo.");
+    return;
+  }
+
+  if (!env.GITHUB_PAT) {
+    await sendMessage(env, chatId, "No tengo credencial para lanzar el post.");
+    return;
+  }
+
+  // El enlace se quita del encargo: lo demas son las instrucciones. Si no, el
+  // "titular:" podria arrastrar la direccion dentro.
+  const encargo = resto.replace(enlace, "").trim();
+  const ok = await dispararWorkflow(env, "post.yml", {
+    enlace: enlace,
+    foto: fotoId || "",
+    chat: String(chatId),
+    encargo: encargo,
+  });
+  await sendMessage(env, chatId, ok
+    ? "🖼️ Dibujando la lámina. No reescribo la nota ni toco el panel." +
+      (fotoId ? " Uso la imagen que mandaste." : "")
+    : "⚠️ No pude lanzar el post. Vuelve a intentarlo en un momento.");
 }
 
 async function comandoNota(env, chatId, text, quien, tipo, autor) {

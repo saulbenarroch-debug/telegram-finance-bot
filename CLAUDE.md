@@ -91,9 +91,23 @@ Tres piezas hacen eso, y el ORDEN entre ellas importa:
   pasábamos y, cuando alguien pedía «dame la fuente para el /nota», no podía
   darla: no la había visto. Es justo el caso en que un modelo se inventa una URL
   con buena pinta.
-- **Un solo sitio habla con la API de Actions** (`dispararWorkflow`). Hay tres
-  workflows que disparar: `nota.yml` a petición, `diario.yml` por reloj y
-  `subir_borrador.yml` cuando alguien toca «Subirla igual».
+- **Un solo sitio habla con la API de Actions** (`dispararWorkflow`). Hay
+  cuatro workflows que disparar: `nota.yml` a petición, `diario.yml` por reloj,
+  `subir_borrador.yml` cuando alguien toca «Subirla igual» y `post.yml` cuando
+  toca «Solo el post».
+- **`/post` no redacta nada.** Dibuja la lámina de Instagram de una pieza **ya
+  publicada**: la lee del panel y la dibuja, sin escribir, sin auditar y sin
+  crear borrador. Existe porque pedir `/nota` de algo ya publicado ofrecía un
+  solo botón —«Escribirla igual»— que rehace la pieza entera y deja un borrador
+  duplicado que nadie quería, solo para conseguir el post.
+  **El botón manda el `id` y no el `slug`**: en `callback_data` caben 64 bytes
+  y los slugs del sitio llegan a 89 caracteres.
+  Junto al enlace se puede escribir `titular:`, `bajada:` y `categoría:`, una
+  por renglón, y mandarlo como pie de una imagen para imponer el fondo.
+- **Una foto con pie `/post` NO es una captura de noticia**, y por eso se mira
+  antes de `comandoCaptura`. Es lo contrario: no dice qué escribir, sino con
+  qué imagen dibujar la lámina de algo que ya existe. Sin esa rama, el motor se
+  ponía a buscar de qué noticia era la foto.
 
 ## Reglas de oro (no negociables)
 
