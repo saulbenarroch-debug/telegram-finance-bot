@@ -248,6 +248,20 @@ export default {
       return new Response(JSON.stringify(ultimo || { aviso: "aun no ha disparado ninguno" }, null, 2),
         { headers: { "Content-Type": "application/json; charset=utf-8" } });
     }
+    // RECURSOS DEL RENDER QUE NO PUEDEN IR EN EL REPO. El repositorio es
+    // público (trampa 13: por los minutos de Actions) y la pila de papeles de la
+    // portada del Entorno es una foto de stock de Canva: usarla dentro del
+    // diseño está permitido, publicarla como archivo suelto no. Vive en KV y
+    // render.py la pide con la misma clave con la que pide la edición.
+    if (url.pathname === "/recurso" && url.searchParams.get("key") === env.WEBHOOK_SECRET) {
+      const nombre = String(url.searchParams.get("nombre") || "");
+      if (!/^[a-z0-9.-]{1,40}$/.test(nombre)) return new Response("nombre no válido", { status: 400 });
+      const datos = await env.KV.get("recurso:" + nombre, "arrayBuffer");
+      if (!datos) return new Response("no existe", { status: 404 });
+      return new Response(datos, {
+        headers: { "Content-Type": nombre.endsWith(".png") ? "image/png" : "application/octet-stream" },
+      });
+    }
     // Endpoint protegido para revisar el newsletter sin pasar por Telegram.
     // /entorno?key=...&force=1 rearma la edición; &datos=1 muestra solo las cifras.
     if (url.pathname === "/entorno" && url.searchParams.get("key") === env.WEBHOOK_SECRET) {
@@ -268,8 +282,14 @@ export default {
                 generado: new Date(ed.ts).toISOString(),
                 datos: ed.datos,
                 secciones: ed.secciones || {},
+                noticias: ed.noticias || [],
+                latam: ed.latam || null,
                 portada: ed.portada || null,
                 titulares: ed.titulares || [],
+                // El texto ya maquetado para Telegram. Lo usa send_telegram.py
+                // cuando la edición se armó en frío desde Actions y hay que
+                // mandar también el texto, no solo las láminas.
+                parts: ed.parts || [],
               },
               null,
               2
@@ -1218,25 +1238,38 @@ function paisDe(n) {
 
 // Quita la misma noticia contada por varios medios (compara palabras del
 // titular, no la URL: el link siempre es distinto).
+// Las palabras con peso de un titular: sin el sufijo del medio, sin tildes y
+// sin las cortas. La usan dedupTitulos() y enlaceDirecto(), que se hacen la
+// misma pregunta -\u00bfestos dos titulares cuentan lo mismo?- y tienen que medirla
+// igual.
+function palabrasTitular(t) {
+  return new Set(
+    sinMedio(t || "")
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-z0-9 ]/g, " ")
+      .split(/\s+/)
+      .filter((x) => x.length > 3)
+  );
+}
+
+// Jaccard entre dos bolsas: palabras compartidas sobre palabras totales.
+function parecidoTitular(w, w2) {
+  let inter = 0;
+  for (const x of w) if (w2.has(x)) inter++;
+  const union = w.size + w2.size - inter;
+  return { indice: union ? inter / union : 0, comunes: inter };
+}
+
 function dedupTitulos(lista) {
   const out = [];
   const bolsas = [];
   for (const n of lista) {
-    const w = new Set(
-      sinMedio(n.t || "")
-        .toLowerCase()
-        .normalize("NFD")
-        .replace(/[\u0300-\u036f]/g, "")
-        .replace(/[^a-z0-9 ]/g, " ")
-        .split(/\s+/)
-        .filter((x) => x.length > 3)
-    );
+    const w = palabrasTitular(n.t);
     let dup = false;
     for (const w2 of bolsas) {
-      let inter = 0;
-      for (const x of w) if (w2.has(x)) inter++;
-      const union = w.size + w2.size - inter;
-      if (union && inter / union > 0.5) {
+      if (parecidoTitular(w, w2).indice > 0.5) {
         dup = true;
         break;
       }
@@ -1268,6 +1301,40 @@ function seleccionarNoticias(cands) {
   return dedupTitulos([].concat(vz, latam, glob));
 }
 
+// EL ENLACE DE GOOGLE NEWS NO SIRVE PARA SACAR LA FOTO. Es un redirector
+// cifrado que solo salta al artículo con JavaScript: pedirlo devuelve una
+// página de Google sin og:image. Probado el 24/09/2026 armando una edición
+// entera solo con feeds de Google: cero fotos de cinco.
+//
+// Pero la misma noticia suele estar también en el historial del KV, que se
+// ingiere de los feeds de los propios medios y trae el enlace directo. Así que
+// si la fuente es de Google, se busca ahí el titular que cuente lo mismo y se
+// usa ese enlace, para la foto y para el «Fuente:» del texto.
+//
+// Se exige parecido de verdad (0,4 y tres palabras en común) porque un
+// emparejamiento flojo no deja la página sin foto: le pone la de OTRA noticia,
+// que es peor. Sin pareja, la página va sin foto y render.py lo resuelve.
+function enlaceDirecto(n, todas) {
+  if (!n || !n.l || !/news\.google\./i.test(n.l)) return n;
+  const w = palabrasTitular(n.t);
+  let mejor = null;
+  let pm = { indice: 0, comunes: 0 };
+  for (const c of todas) {
+    if (!c.l || /news\.google\./i.test(c.l)) continue;
+    const p = parecidoTitular(w, palabrasTitular(c.t));
+    if (p.indice > pm.indice) {
+      pm = p;
+      mejor = c;
+    }
+  }
+  if (mejor && pm.indice >= 0.4 && pm.comunes >= 3) {
+    return Object.assign({}, n, { l: mejor.l, t: mejor.t });
+  }
+  console.log("[entorno] sin enlace directo para «" + sinMedio(n.t).slice(0, 60) + "»" +
+    (mejor ? " (lo más parecido, " + pm.indice.toFixed(2) + ": «" + sinMedio(mejor.t).slice(0, 60) + "»)" : ""));
+  return n;
+}
+
 // Marca de dónde viene cada titular: le dice al modelo qué usar para la noticia
 // principal (VZ) y qué para Latam enlatada (LATAM).
 function etiquetar(lista, g) {
@@ -1281,8 +1348,13 @@ function promptEntorno(d, noticias) {
     .map((n, i) => {
       const etq = (n.g || "OTRO") + (n.p ? "/" + n.p : "");
       const medio = medioDe(n.t) || "";
+      // [directo]: el enlace es del propio medio y no un redirector de Google
+      // News, así que de ahí se puede sacar la foto de la página. Se le dice al
+      // modelo en vez de puntuarlo a escondidas: la elección sigue siendo
+      // editorial, solo que sabiendo qué noticia puede ir con foto.
+      const directo = n.l && !/news\.google\./i.test(n.l) ? " [directo]" : "";
       const cab =
-        `${i + 1}. [${etq}] ${sinMedio(n.t)}` +
+        `${i + 1}. [${etq}]${directo} ${sinMedio(n.t)}` +
         (medio ? ` (medio: ${medio})` : "") +
         (n.d ? ` (${n.d})` : "");
       const res = i < 14 ? resumenUtil(n) : "";
@@ -1312,41 +1384,80 @@ function promptEntorno(d, noticias) {
     "- Texto plano, sin markdown, sin asteriscos, sin viñetas dentro de los " +
     "párrafos.\n" +
     "- Respeta EXACTAMENTE los marcadores ### del formato. Nada fuera de ellos.\n\n" +
+    // LOS TOPES DE CARACTERES NO SON DE ESTILO: SON LAS CAJAS DE LA PLANTILLA.
+    // Se midieron sobre el Canva «entorno en viñetas» (DAHOniEgyiw) el
+    // 24/09/2026. El título de cada página va a 121 px en una caja de 610 de
+    // ancho y dos renglones, así que caben unos 22 caracteres; el cuerpo, unos
+    // 700 en su columna. Pasarse no rompe la lámina -render.py encoge el texto-,
+    // pero encogido a la mitad deja de parecerse a la plantilla, que es lo que
+    // pidió el dueño: añadir fotos e información, no cambiar el diseño.
     "FORMATO EXACTO DE SALIDA:\n" +
     "###CONTRAPORTADA\n" +
     "Un solo párrafo de máximo 4 líneas que condense los temas centrales de esta " +
     "edición y funcione como gancho. Debe mencionar al menos dos hechos concretos " +
     "(con cifra o nombre propio), no generalidades.\n" +
-    "###NICHO\n" +
-    "El país o temática de la noticia principal, en mayúsculas, formato " +
-    "VENEZUELA / MACROECONOMÍA o VENEZUELA / FINANZAS.\n" +
-    "###TITULAR\n" +
-    "Titular conciso y directo, una sola línea.\n" +
-    "###SUBTITULO\n" +
-    "Subtítulo ligeramente llamativo (amarillista pero con rigor técnico, sin " +
-    "desinformar), una sola línea, que insinúe la consecuencia o el riesgo.\n" +
-    "###CUERPO\n" +
-    "Exactamente 3 párrafos cortos separados por una línea en blanco: (1) el hecho " +
-    "y sus cifras, (2) su impacto, (3) perspectiva estratégica.\n" +
-    "###FUENTE\n" +
-    "Solo el número del titular de la lista en que se basa la noticia principal " +
-    "(un dígito o dos, nada más). De ahí se saca la foto de la lámina.\n" +
+    "###NOTICIA1\n" +
+    "###NOTICIA2\n" +
+    "###NOTICIA3\n" +
+    "###NOTICIA4\n" +
+    "Son las 4 noticias de la semana, cada una bajo su propio marcador. La " +
+    "NOTICIA1 es la más relevante: abre la portada. Dentro de cada bloque van " +
+    "estas líneas, en este orden y cada una empezando por su etiqueta:\n" +
+    "TEMA: país o sector en MAYÚSCULAS, una o dos palabras, máximo 12 " +
+    "caracteres (VENEZUELA, PETRÓLEO, BANCA, FINANZAS).\n" +
+    "TITULO: el hecho en 2 a 4 palabras, máximo 22 caracteres. Es el rótulo " +
+    "grande de la página y tiene que decir QUÉ pasó, con un nombre propio o " +
+    "un hecho reconocible: «Terremotos del 24-J», «Chevron amplía licencia», " +
+    "«Récord del IBC». Si el hecho tiene protagonista (una persona, una " +
+    "empresa, un organismo), su nombre va en el título.\n" +
+    "SUBTITULO: el ángulo secundario de la misma noticia, máximo 40 caracteres: " +
+    "«OFAC responde a la emergencia (GL 60)».\n" +
+    "SUMARIO: una frase de máximo 110 caracteres que la resuma para el índice.\n" +
+    "FUENTE: solo el número del titular de la lista en que se basa (un dígito o " +
+    "dos, nada más). De ahí sale la foto de su página.\n" +
+    "CUERPO:\n" +
+    "exactamente 3 párrafos cortos separados por una línea en blanco, entre los " +
+    "tres como máximo 700 caracteres: (1) el hecho y sus cifras, (2) su alcance, " +
+    "(3) el contexto.\n" +
+    "LECTURA: nuestra lectura en un párrafo de máximo 280 caracteres: qué " +
+    "significa y qué toca vigilar.\n" +
+    "TEXTO2: un párrafo de máximo 280 caracteres que desarrolle el SUBTITULO " +
+    "con un HECHO distinto del cuerpo, sacado de los titulares: una decisión, " +
+    "una reacción, una medida (tras los terremotos, «la OFAC emitió la Licencia " +
+    "General 60…»). No una conclusión ni un resumen de lo ya dicho. Si no hay " +
+    "segundo hecho en los titulares, cuenta una consecuencia concreta del " +
+    "primero sin añadir cifras.\n" +
     "###LATAM\n" +
-    "Exactamente 4 ítems de países DISTINTOS de América Latina (Estados Unidos, " +
-    "Europa y Asia NO cuentan como país de la región, aunque la noticia afecte a " +
-    "Latam), separados por una " +
-    "línea con tres guiones (---). Cada ítem: primera línea 'PAÍS — Titular en " +
-    "español' (sin punto final); siguiente línea, un sumario de máximo 3 líneas " +
-    "que NO empiece repitiendo el nombre del país. No incluyas Venezuela aquí (ya " +
-    "va en la noticia principal).\n\n" +
+    "Exactamente 4 párrafos de países DISTINTOS de América Latina (Estados " +
+    "Unidos, Europa y Asia NO cuentan como país de la región, aunque la noticia " +
+    "afecte a Latam), separados por una línea con tres guiones (---). Cada " +
+    "párrafo empieza con el país como sujeto («México sorprendió: sus " +
+    "exportaciones…») y tiene máximo 230 caracteres. No incluyas Venezuela aquí " +
+    "(ya va en las 4 noticias).\n" +
+    "###LATAM_FUENTE\n" +
+    "Los números de los titulares en que se basa cada párrafo de LATAM, en el " +
+    "mismo orden y separados por comas (por ejemplo: 12, 15, 9, 20). De ahí " +
+    "sale la foto de esa página.\n\n" +
     "CÓMO ELEGIR:\n" +
     "- Prefiere hechos con cifra, decisión de política económica u operación " +
     "concreta (emisión, crédito, adquisición, dato oficial). Evita declaraciones, " +
     "polémicas verbales y peleas políticas sin efecto económico medible.\n" +
-    "- La noticia principal debe apoyarse en un HECHO concreto de los titulares " +
-    "marcados [VZ] (una decisión, una cifra publicada, una operación, un anuncio) " +
-    "y usar las cifras del cuadro como soporte. No escribas una nota que sea solo " +
-    "la lectura de la tabla.\n" +
+    "- Las 4 noticias salen de HECHOS concretos de los titulares marcados [VZ] " +
+    "(una decisión, una cifra publicada, una operación, un anuncio) y usan las " +
+    "cifras del cuadro como soporte. Al menos 3 son de Venezuela; la cuarta " +
+    "puede ser internacional si afecta directamente a Venezuela (petróleo, " +
+    "sanciones, Reserva Federal). Cada una cuenta un hecho DISTINTO: dos " +
+    "noticias del mismo hecho son una sola. Ninguna puede ser solo la lectura " +
+    "de la tabla.\n" +
+    "- Cada noticia tiene su foto en la plantilla, y solo se puede sacar de los " +
+    "titulares marcados [directo]. Entre dos hechos de relevancia parecida, " +
+    "elige el [directo]. No elijas uno flojo solo porque lo sea.\n" +
+    "- La tasa del BCV, la paralela, la brecha, la devaluación, la inflación y " +
+    "las cotizaciones de mercados YA TIENEN SU PÁGINA (Economía en cifras). Una " +
+    "noticia cuyo hecho sea solo que una de esas cifras subió o bajó está " +
+    "repetida: descártala aunque el titular sea de un medio, y elige otro " +
+    "hecho. Esas cifras sí pueden aparecer como contexto dentro de otra " +
+    "noticia.\n" +
     "- Los 4 ítems de Latam salen de los titulares marcados [LATAM] o [GLOBAL] con " +
     "efecto en la región. Si un país no tiene noticia económica útil, usa otro.\n\n" +
     "DATOS DUROS (calculados por el sistema, son la verdad):\n" +
@@ -1359,18 +1470,56 @@ function promptEntorno(d, noticias) {
   );
 }
 
+// Los campos de cada bloque ###NOTICIAn. Se aceptan con tilde y sin ella
+// («TÍTULO», «SUBTÍTULO») y con los asteriscos que a veces pone el modelo aunque
+// se le pida texto plano: un campo que no se reconoce es una lámina con un hueco.
+const CAMPOS_NOTICIA = /^\s*\**\s*(TEMA|T[IÍ]TULO|SUBT[IÍ]TULO|SUMARIO|FUENTE|CUERPO|LECTURA|TEXTO\s*2)\s*\**\s*:\s*\**/gim;
+
+function parseNoticia(bloque) {
+  const out = {};
+  const marcas = [];
+  let m;
+  CAMPOS_NOTICIA.lastIndex = 0;
+  while ((m = CAMPOS_NOTICIA.exec(bloque)) !== null) {
+    const k = m[1].toUpperCase()
+      .normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/\s+/g, "");
+    marcas.push({ k: k, i: m.index, fin: CAMPOS_NOTICIA.lastIndex });
+  }
+  for (let i = 0; i < marcas.length; i++) {
+    const hasta = i + 1 < marcas.length ? marcas[i + 1].i : bloque.length;
+    out[marcas[i].k] = bloque.slice(marcas[i].fin, hasta).trim();
+  }
+  return {
+    tema: (out.TEMA || "").toUpperCase(),
+    titulo: out.TITULO || "",
+    subtitulo: out.SUBTITULO || "",
+    sumario: out.SUMARIO || "",
+    fuente: parseInt((out.FUENTE || "").match(/\d+/) || [NaN], 10),
+    cuerpo: out.CUERPO || "",
+    lectura: (out.LECTURA || "").replace(/^[▪•\-\s]+/, ""),
+    texto2: out.TEXTO2 || "",
+  };
+}
+
 function parseSecciones(txt) {
   const out = {};
-  const re = /###\s*(CONTRAPORTADA|NICHO|TITULAR|SUBTITULO|CUERPO|FUENTE|LATAM)\s*\n?/gi;
+  const re = /###\s*(CONTRAPORTADA|NOTICIA\s*[1-4]|LATAM_FUENTE|LATAM|NICHO|TITULAR|SUBTITULO|CUERPO|FUENTE)\s*\n?/gi;
   const marcas = [];
   let m;
   while ((m = re.exec(txt)) !== null) {
-    marcas.push({ k: m[1].toUpperCase(), i: m.index, fin: re.lastIndex });
+    // «NOTICIA 1» y «NOTICIA1» son el mismo marcador.
+    marcas.push({ k: m[1].toUpperCase().replace(/\s+/g, ""), i: m.index, fin: re.lastIndex });
   }
   for (let i = 0; i < marcas.length; i++) {
     const hasta = i + 1 < marcas.length ? marcas[i + 1].i : txt.length;
     out[marcas[i].k] = txt.slice(marcas[i].fin, hasta).trim();
   }
+  // Las 4 noticias se entregan ya partidas en sus campos. Se descartan las que
+  // no traen ni título ni cuerpo: una página con la plantilla vacía es peor
+  // que una página menos.
+  out.noticias = [1, 2, 3, 4]
+    .map((n) => (out["NOTICIA" + n] ? parseNoticia(out["NOTICIA" + n]) : null))
+    .filter((x) => x && (x.titulo || x.cuerpo));
   return out;
 }
 
@@ -1409,72 +1558,135 @@ async function buildEntorno(env) {
   const crudo = await aiEntorno(env, promptEntorno(datos, noticias));
   const s = parseSecciones(crudo);
 
-  // La noticia que sustenta la nota principal: de ahí sale la foto de la lámina.
-  const idx = parseInt((s.FUENTE || "").match(/\d+/) || [NaN], 10) - 1;
-  // Candidatas: la que citó el modelo primero, luego las mejores de Venezuela.
-  // Muchos medios no publican og:image o bloquean la descarga, así que se
-  // prueban varias en vez de quedarse sin foto.
-  const candidatas = [];
-  for (const n of [noticias[idx]].concat(noticias.filter((x) => x.g === "VZ"), noticias)) {
-    if (n && n.l && !candidatas.some((c) => c.l === n.l)) candidatas.push(n);
-    if (candidatas.length >= 4) break;
+  // FOTOS: UNA POR NOTICIA Y OTRA PARA LATAM, Y NINGUNA REPETIDA.
+  //
+  // La plantilla de septiembre de 2026 pide cinco fotos donde la anterior pedía
+  // una: la del titular que citó el modelo para cada noticia y la del primer
+  // párrafo de Latam. Se piden TODAS A LA VEZ: en serie eran cinco descargas de
+  // HTML una detrás de otra, y el Worker no tiene ese tiempo. Son cinco a lo
+  // sumo, que caben de sobra en las 50 subpeticiones por invocación del plan
+  // gratuito de Cloudflare.
+  //
+  // CADA PÁGINA LLEVA LA FOTO DE SU NOTICIA O NINGUNA. No se rellena con la de
+  // otro titular libre del pozo: eso es poner la foto de una noticia encima de
+  // otra, que en el medio ya dio un derrame petrolero ilustrando la firma de un
+  // acuerdo energético. Una página sin foto la resuelve render.py.
+  const todas = [].concat(curadas, delHistorial);
+  const elegida = (k) => enlaceDirecto((Number.isFinite(k) && noticias[k - 1]) || null, todas);
+  // Latam trae la fuente de cada párrafo y se prueba en orden hasta dar con
+  // foto: así la de la página es siempre de algo que se cuenta en ella.
+  const fuentesLatam = ((s.LATAM_FUENTE || "").match(/\d+/g) || [])
+    .slice(0, 4)
+    .map((k) => elegida(parseInt(k, 10)))
+    .filter(Boolean);
+  const fuentes = s.noticias.map((nt) => elegida(nt.fuente));
+  const pozo = [];
+  for (const n of fuentes.concat(fuentesLatam)) {
+    if (n && n.l && !pozo.some((c) => c.l === n.l)) pozo.push(n);
   }
-  let portada = null;
-  for (const c of candidatas) {
-    const img = await ogImagen(c.l);
-    if (!portada) {
-      portada = { titulo: sinMedio(c.t), medio: medioDe(c.t), url: c.l, fecha: c.d || "", imagen: img };
-    }
+  const imagenes = new Map(
+    await Promise.all(pozo.map(async (n) => [n.l, await ogImagen(n.l)]))
+  );
+  const usadas = new Set();
+  const foto = (n) => {
+    const img = n && imagenes.get(n.l);
+    if (!img || usadas.has(img)) return "";
+    usadas.add(img);
+    return img;
+  };
+
+  const notas = s.noticias.map((nt, i) => {
+    const src = fuentes[i];
+    return Object.assign({}, nt, {
+      numero: i + 1,
+      imagen: foto(src),
+      url: src ? src.l || "" : "",
+      medio: src ? medioDe(src.t) : "",
+      fuenteTitulo: src ? sinMedio(src.t) : "",
+    });
+  });
+  const itemsLatam = (s.LATAM || "")
+    .split(/\n?-{3,}\n?/)
+    .map((x) => x.trim())
+    .filter(Boolean)
+    .slice(0, 4);
+  let latam = { items: itemsLatam, imagen: "", url: "" };
+  for (const n of fuentesLatam) {
+    const img = foto(n);
     if (img) {
-      portada = { titulo: sinMedio(c.t), medio: medioDe(c.t), url: c.l, fecha: c.d || "", imagen: img };
+      latam = { items: itemsLatam, imagen: img, url: n.l || "" };
       break;
     }
   }
+
   const cabecera =
     "📰 <b>ENTORNO EN VIÑETAS</b> — Resumen semanal\n" +
     "<i>" + fechaLarga(datos.hoy) + " · Sureconomics</i>";
 
+  // UNA NOTICIA POR MENSAJE. Con cuatro noticias enteras en un solo mensaje se
+  // pasa de los 4.096 caracteres que admite Telegram, y un mensaje rechazado
+  // por largo no llega a nadie.
   const partes = [];
-  if (s.CONTRAPORTADA && s.CUERPO) {
+  if (notas.length) {
     partes.push(
-      cabecera + "\n\n<b>CONTRAPORTADA</b>\n" + escapeHtml(s.CONTRAPORTADA) + "\n\n" +
-        "<b>" + escapeHtml(s.NICHO || "VENEZUELA") + "</b>\n" +
-        "<b>" + escapeHtml(s.TITULAR || "") + "</b>\n" +
-        "<i>" + escapeHtml(s.SUBTITULO || "") + "</i>\n\n" +
-        escapeHtml(s.CUERPO)
+      cabecera + "\n\n" +
+        (s.CONTRAPORTADA ? escapeHtml(s.CONTRAPORTADA) + "\n\n" : "") +
+        "<b>En esta edición</b>\n" +
+        notas
+          .map((n) => "(0" + n.numero + ") <b>" + escapeHtml(n.titulo) + "</b> — " + escapeHtml(n.sumario))
+          .join("\n")
     );
+    for (const n of notas) partes.push(textoNoticia(n));
   } else {
     // Si el modelo no respetó los marcadores, mandamos su texto tal cual: es
     // mejor una edición imperfecta que ninguna.
     partes.push(cabecera + "\n\n" + escapeHtml(crudo));
   }
   partes.push(bloqueCifras(datos));
-  if (s.LATAM) {
-    const items = s.LATAM.split(/\n?-{3,}\n?/)
-      .map((x) => x.trim())
-      .filter(Boolean)
-      .map((x) => {
-        const lin = x.split("\n");
-        return "<b>" + escapeHtml(lin[0]) + "</b>\n" + escapeHtml(lin.slice(1).join("\n").trim());
-      });
-    partes.push("<b>🌎 LATAM ENLATADA</b>\n\n" + items.join("\n\n") + "\n\n" + bloqueFuentes(noticias));
+  if (itemsLatam.length) {
+    partes.push(
+      "<b>🌎 LATAM ENLATADA</b>\n\n" +
+        itemsLatam.map((x) => "• " + escapeHtml(x)).join("\n\n") +
+        "\n\n" + bloqueFuentes(noticias)
+    );
   } else {
     partes.push(bloqueFuentes(noticias));
   }
 
+  const principal = notas[0] || null;
   return {
     ts: Date.now(),
     fecha: datos.hoy,
     parts: partes,
     datos: datos,
-    // Para el renderizador de láminas (entorno/render.py): secciones sueltas,
+    // Para el renderizador de láminas (entorno/render.py): los campos sueltos,
     // no el texto ya maquetado para Telegram.
     secciones: s,
-    portada: portada,
+    noticias: notas,
+    latam: latam,
+    // 'portada' es lo que leía render.py antes de las cuatro noticias. Se deja
+    // apuntando a la principal para que un render viejo no se quede sin foto.
+    portada: principal
+      ? { titulo: principal.fuenteTitulo, medio: principal.medio, url: principal.url,
+          fecha: "", imagen: principal.imagen }
+      : null,
     titulares: noticias.slice(0, 12).map((n) => ({
       t: sinMedio(n.t), medio: medioDe(n.t), l: n.l || "", d: n.d || "", g: n.g || "",
     })),
   };
+}
+
+// Una noticia de la edición, como mensaje de Telegram. El subtítulo va una vez,
+// encabezando su propio bloque: en la lámina sale dos veces porque la plantilla
+// lo usa también de antetítulo, pero en texto corrido repetirlo es ruido.
+function textoNoticia(n) {
+  return (
+    "<b>(0" + n.numero + ") " + escapeHtml(n.tema) + " · " + escapeHtml(n.titulo) + "</b>\n\n" +
+    escapeHtml(n.cuerpo) +
+    (n.lectura ? "\n\n▪ <i>" + escapeHtml(n.lectura) + "</i>" : "") +
+    (n.texto2 ? "\n\n<b>" + escapeHtml(n.subtitulo) + "</b>\n" + escapeHtml(n.texto2) : "") +
+    (n.url ? '\n\n<a href="' + escapeHtml(n.url) + '">Fuente: ' + escapeHtml(n.medio || "nota original") + "</a>" : "")
+  );
 }
 
 function bloqueFuentes(noticias) {
@@ -1491,15 +1703,40 @@ function bloqueFuentes(noticias) {
   );
 }
 
+// Los primeros 'max' caracteres de una respuesta, cortando la descarga en
+// cuanto se tienen. Si el cuerpo no se deja leer por partes, se lee entero.
+async function principioDe(r, max) {
+  if (!r.body || !r.body.getReader) return (await r.text()).slice(0, max);
+  const lector = r.body.getReader();
+  const dec = new TextDecoder();
+  let txt = "";
+  while (txt.length < max) {
+    const { value, done } = await lector.read();
+    if (done) break;
+    txt += dec.decode(value, { stream: true });
+  }
+  try { await lector.cancel(); } catch {}
+  return txt.slice(0, max);
+}
+
 // Foto de la lámina: la imagen destacada (og:image) del artículo fuente. Es lo
 // único que puede ilustrar la noticia de la semana sin criterio humano.
 async function ogImagen(url) {
   if (!url) return "";
   try {
     // Con el UA de bot, medios como Infobae devuelven 403 y no hay foto.
-    const r = await fetch(url, { headers: BROWSER_UA, redirect: "follow" });
+    // CON TOPE DE TIEMPO: las fotos se piden todas a la vez con Promise.all, y
+    // un solo medio que acepte la conexión y no conteste colgaría la edición
+    // entera. Es la trampa 9 de este repo en versión Worker.
+    const r = await fetch(url, {
+      headers: BROWSER_UA, redirect: "follow", signal: AbortSignal.timeout(8000),
+    });
     if (!r.ok) return "";
-    const html = (await r.text()).slice(0, 200000);
+    // SOLO EL PRINCIPIO DE LA PÁGINA. og:image va en el <head>, y leer el
+    // cuerpo entero para luego recortarlo gastaba CPU en decodificar medio
+    // megabyte por nota. Con la plantilla de cuatro noticias se buscan hasta
+    // nueve fotos por edición, y el plan gratuito de Cloudflare mide la CPU.
+    const html = await principioDe(r, 90000);
     for (const re of [
       /<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i,
       /<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i,
@@ -1542,6 +1779,30 @@ async function enviarEntorno(env, chatId, force) {
   const enCache = await kvGet(env, "entorno:last", null);
   const fria = force || !enCache || !enCache.parts ||
     Date.now() - enCache.ts >= ENTORNO_TTL * 1000;
+
+  // EN FRÍO YA NO SE ARMA AQUÍ, Y ESTO CAMBIÓ CON LA PLANTILLA DE CUATRO
+  // NOTICIAS (24/09/2026). Con una noticia, armarla tardaba 26 s y cabía justo
+  // en los ~30 s de waitUntil. Con cuatro, el modelo escribe más del doble y
+  // hay cinco fotos que buscar: no cabe, y el corte de Cloudflare no avisa.
+  //
+  // Una petición HTTP al Worker, en cambio, no tiene ese límite mientras quien
+  // la hace siga esperando. Así que se lanza entorno.yml, y es render.py el que
+  // pide la edición: el Worker la arma dentro de esa petición, la guarda en KV
+  // y se la devuelve; el workflow manda el texto y luego las láminas al chat
+  // que la pidió. Sin GITHUB_PAT no hay workflow que lanzar, y se sigue
+  // armando aquí como antes: mejor intentarlo que no mandar nada.
+  if (fria && env.GITHUB_PAT) {
+    const lanzado = await dispararLaminas(env, chatId, { conTexto: true, forzar: force });
+    await sendMessage(
+      env,
+      chatId,
+      lanzado
+        ? "📰 No tengo la edición de esta semana armada, así que la armo de cero. " +
+          "Tarda unos minutos: te llegan aquí el texto y las láminas."
+        : "No pude lanzar el armado del newsletter. Intenta de nuevo en unos minutos."
+    );
+    return;
+  }
   await sendMessage(
     env,
     chatId,
@@ -2096,7 +2357,12 @@ async function comandoNota(env, chatId, text, quien, tipo, autor) {
 }
 
 // Dispara el workflow "Entorno en Vinetas" pasandole el chat que lo pidio.
-async function dispararLaminas(env, chatId) {
+// conTexto: el workflow manda también el texto de la edición, no solo las
+// láminas. Es lo que se pide cuando la edición se arma en frío desde Actions:
+// el chat no la tenía y no llegó a mandar nada. forzar: rearmarla aunque haya
+// una en caché, que es lo que pide quien escribe «actualiza el entorno».
+async function dispararLaminas(env, chatId, opciones) {
+  const o = opciones || {};
   try {
     const r = await fetch(
       "https://api.github.com/repos/" + GITHUB_REPO + "/actions/workflows/entorno.yml/dispatches",
@@ -2109,7 +2375,14 @@ async function dispararLaminas(env, chatId) {
           "User-Agent": "sureconomics-bot",
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ ref: "main", inputs: { chat: String(chatId) } }),
+        body: JSON.stringify({
+          ref: "main",
+          inputs: {
+            chat: String(chatId),
+            con_texto: o.conTexto ? "1" : "",
+            forzar: o.forzar ? "1" : "",
+          },
+        }),
       }
     );
     return r.status === 204; // GitHub responde 204 sin cuerpo cuando acepta

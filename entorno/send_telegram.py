@@ -2,7 +2,11 @@
 """
 Envia las laminas de "Entorno en Vinetas" del dia como album de fotos a los
 chats del bot. Usa el .env del repo (o las variables de entorno en Actions).
-Uso: py send_telegram.py [AAAA-MM-DD]
+Uso: py send_telegram.py [AAAA-MM-DD] [--con-texto]
+
+--con-texto manda antes el texto de la edicion (edicion.json, que deja
+render.py). Se usa cuando la edicion se armo en frio desde Actions: el chat no
+la tenia en cache, asi que no mando nada, y el texto tiene que salir de aqui.
 """
 import json
 import os
@@ -15,7 +19,12 @@ from pathlib import Path
 
 BASE = Path(__file__).parent
 OUT = BASE / "out"
-ORDEN = ["1-portada", "2-noticia", "3-cifras", "4-latam"]
+# EL ORDEN LO DA EL NUMERO DEL NOMBRE, no una lista fija. Con la plantilla de
+# septiembre de 2026 son ocho laminas (1-portada ... 8-latam), pero una edicion
+# con menos noticias trae menos; con la lista fija, cualquier nombre nuevo se
+# quedaba sin enviar sin que nada avisara.
+def ordenadas(dest):
+    return sorted(dest.glob("[0-9]*-*.png"), key=lambda p: int(p.name.split("-")[0]))
 
 
 def load_env():
@@ -71,17 +80,44 @@ def enviar(token, chat, laminas, pie):
     )
 
 
+def enviar_texto(token, chat, partes):
+    """El texto de la edicion, una parte por mensaje y en HTML, como lo manda
+    el Worker (sendHtml). Una parte que falle no corta las demas."""
+    for p in partes:
+        cuerpo = json.dumps({"chat_id": chat, "text": p, "parse_mode": "HTML",
+                             "disable_web_page_preview": True}).encode("utf-8")
+        req = urllib.request.Request(
+            f"https://api.telegram.org/bot{token}/sendMessage", data=cuerpo,
+            headers={"Content-Type": "application/json"})
+        try:
+            urllib.request.urlopen(req, timeout=60).read()
+        except urllib.error.HTTPError as e:
+            print("ERR texto chat", chat, e.code, e.read()[:200])
+
+
 def main():
     env = load_env()
-    fecha = sys.argv[1] if len(sys.argv) > 1 else date.today().isoformat()
-    dest = OUT / fecha
-    laminas = [dest / f"{n}.png" for n in ORDEN if (dest / f"{n}.png").exists()]
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    con_texto = "--con-texto" in sys.argv
+    if args:
+        dest = OUT / args[0]
+    else:
+        # La carpeta la nombra render.py con la fecha DE LA EDICION, que no es
+        # la de hoy si se sirvio una de cache: se coge la mas reciente.
+        carpetas = sorted(p for p in OUT.glob("20*") if p.is_dir())
+        dest = carpetas[-1] if carpetas else OUT / date.today().isoformat()
+    fecha = dest.name
+    laminas = ordenadas(dest)
     if not laminas:
         raise SystemExit(f"no hay laminas en {dest}; corre primero render.py")
 
     pie = f"📰 Entorno en Viñetas — resumen semanal ({fecha})"
     fallos = 0
     for chat in [c.strip() for c in env["CHAT_ID"].split(",") if c.strip()]:
+        if con_texto and (dest / "edicion.json").exists():
+            partes = json.loads((dest / "edicion.json").read_text(encoding="utf-8")).get("parts") or []
+            enviar_texto(env["TELEGRAM_TOKEN"], chat, partes)
+            print("OK  chat", chat, "->", len(partes), "mensajes de texto")
         try:
             r = enviar(env["TELEGRAM_TOKEN"], chat, laminas, pie)
             print("OK  chat", chat, "->", len(r.get("result", [])), "fotos")

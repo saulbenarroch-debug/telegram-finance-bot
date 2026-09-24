@@ -20,7 +20,7 @@ Objetivo a futuro: abrirlo al público (multiusuario, bilingüe).
 | 1 | Resumen 2x/día (ES+EN) | `bot.py` | GitHub Actions `news.yml` | 10:00 y 16:00 VET |
 | 2 | Alertas de alto impacto | `breaking.py` | Actions `breaking.yml` | cada hora |
 | 3 | Bot conversacional **y reloj del medio** | `cloudflare-worker/worker.js` | Cloudflare Worker | webhook + cron 3h + tandas 8:00 y 14:00 VET |
-| 4 | "Entorno en Viñetas" (newsletter semanal + 4 láminas) | `worker.js` + `entorno/` | Worker + Actions `entorno.yml` | **a pedido**; se prearma los lunes |
+| 4 | "Entorno en Viñetas" (newsletter semanal + 8 láminas) | `worker.js` + `entorno/` | Worker + Actions `entorno.yml` | **a pedido**; se prearma los lunes |
 | 5 | "Al Cierre" (láminas diarias de cierre, Rendigroup) | `al-cierre/` | Actions `al-cierre.yml` | 5:30 pm VET |
 | 6 | **Puerta de la redacción de SurEconomics** | `worker.js` | Worker | a petición |
 
@@ -108,6 +108,82 @@ Tres piezas hacen eso, y el ORDEN entre ellas importa:
   antes de `comandoCaptura`. Es lo contrario: no dice qué escribir, sino con
   qué imagen dibujar la lámina de algo que ya existe. Sin esa rama, el motor se
   ponía a buscar de qué noticia era la foto.
+
+## La plantilla del Entorno en Viñetas
+
+`entorno/render.py` es un clon en código del Canva **«entorno en viñetas»**
+(`DAHOniEgyiw`), y desde el 24/09/2026 de su versión de **ocho páginas**:
+portada, índice, cuatro noticias, economía en cifras y Latam enlatada. El
+encargo del dueño fue literal: *«no quites nada, tu trabajo es añadir las fotos
+y la información, no cambiar la plantilla»*. Así que **nada de ese archivo se
+estima a ojo**:
+
+- **La geometría sale de la API de Canva**, en las unidades de su lienzo
+  (1587,4 × 2245). Cada página se maqueta en esas unidades y se escala a
+  1414 px al final, para copiar los números tal cual.
+- **Las tipografías salen del PDF exportado**, que incrusta el nombre real de
+  cada fuente: Inter, Host Grotesk Light, Montserrat, IBM Plex Mono y Nourd
+  Heavy. Nourd no es libre y se sustituye por Archivo Black (solo en las dos
+  tasas). Las demás están en `assets/fonts/` con su `OFL.txt`.
+- **Se comparó renglón a renglón** con la exportación: todos los textos caen a
+  0-2 px de la plantilla.
+
+### Tres diferencias entre CSS y Canva que ya costaron una tarde
+
+1. **Dónde cae la primera línea.** CSS reparte el interlineado mitad arriba y
+   mitad abajo, también en la primera línea; Canva la pega al borde de la caja.
+   Con interlineado menor que 1 CSS subía el bloque entero: 0,105 em con 0,98 y
+   0,199 em con 0,8. Las dos medidas cuadran con `(1,194 − interlineado) / 2`,
+   y el guion de cada página lo corrige con la métrica de cada familia
+   (`ALTO_NATURAL`). Si se añade una tipografía, hay que darle la suya.
+2. **Espaciado negativo en textos alineados a la derecha.** CSS lo aplica
+   también detrás de la última letra y el texto se sale ~16 unidades de su caja
+   («LATAM ENLATADA», los números rojos). La clase `.dcha` lo compensa.
+3. **Comillas dentro de `style='…'`.** `font-family:'Archivo Black'` cerraba el
+   atributo y las dos tasas desaparecieron de la lámina sin ningún error. Los
+   nombres de familia van sin comillas en los estilos en línea.
+
+### Las fotos: cinco donde antes había una, y solo si son de su noticia
+
+- Salen del `og:image` del artículo fuente de cada noticia y de Latam. **Un
+  enlace de Google News no sirve**: es un redirector que solo salta con
+  JavaScript y no tiene foto. `enlaceDirecto()` busca la misma noticia en el
+  historial del KV, que sí trae enlaces del propio medio.
+- **Nunca se rellena con la foto de otro titular.** Sin foto, la página lleva
+  el mapa de puntos de la propia plantilla en el hueco. Una foto ajena encima
+  de una noticia ya dio, en el medio, un derrame petrolero ilustrando un
+  acuerdo energético.
+- **Cuántas páginas salen con foto depende de Tavily.** Sus búsquedas son las
+  que traen enlaces directos de medios venezolanos; con Tavily sin crédito, en
+  la primera prueba solo 1 de 5 páginas tuvo foto. Recargarlo mejora esto.
+
+### Lo que la plantilla trae de relleno y NO se publica como dato
+
+- **«Extensión de dolarización informal: 76 %»** es texto de ejemplo: el
+  sistema no tiene esa cifra y sale **s/d** hasta que se decida su fuente.
+  `render.py` ya lee `datos.dolarizacion.valor` si algún día existe.
+- Los «8» de las tasas, el «90 %», las fechas y la línea de «Fuente: Condor
+  Ferries» se sustituyen por los datos y las fuentes reales.
+
+### Recursos que no pueden estar en este repo (que es público)
+
+- **La pila de papeles de la portada es una foto de stock de Canva.** Usarla
+  dentro del diseño está permitido; publicarla como archivo suelto, no. Vive en
+  el KV del Worker (`recurso:pila.png`), la sirve `/recurso` con la misma clave
+  que la edición y `render.py` la guarda en `assets/privado/` (en .gitignore).
+- **Las referencias** (`assets/referencia/`) llevan las fotos de stock de
+  ejemplo. Se regeneran exportando el Canva a PNG de 1414 de ancho.
+- En Canva quedó una copia de trabajo, **«BORRABLE - recursos del render de
+  Entorno en Viñetas»**, de la que se extrajeron la pila y el mapa con fondo
+  transparente. Se puede borrar.
+
+### Si se arma en frío, ya no se arma en el chat
+
+Con cuatro noticias el modelo escribe el doble y hay cinco fotos que buscar:
+armarla ya no cabe en los ~30 s de `ctx.waitUntil()` (trampa 10). Así que en
+frío `enviarEntorno()` lanza `entorno.yml` con `con_texto=1`, y es `render.py`
+quien pide la edición **por HTTP** —una petición no tiene ese corte mientras el
+cliente espere—; luego `send_telegram.py --con-texto` manda texto y láminas.
 
 ## Reglas de oro (no negociables)
 
@@ -317,9 +393,11 @@ Sin Python global en Windows: hay un runtime portátil en `.pyruntime/`
 
 - Probar de punta a punta el último salto del newsletter (Actions → álbum de
   láminas al chat que lo pidió).
-- Rediseño de la plantilla del newsletter (previsto por el dueño). El texto está
-  desacoplado del render a propósito: si el render falla, el newsletter escrito
-  llega igual.
+- **Fuente de la «extensión de dolarización informal»** de la lámina de cifras:
+  sale «s/d» hasta que el dueño diga de dónde se saca.
+- **El Worker no tiene el embudo de dos cuentas de Gemini** del motor: el
+  newsletter usa solo la principal y, cuando flash se agota, escribe flash-lite,
+  que obedece peor los topes de caracteres y repite hechos entre noticias.
 - Multiusuario de verdad: preferencia de idioma por usuario, alta/baja de
   suscriptores sin editar `CHAT_ID`.
 - Filtrar "solo medios verificados" con lista blanca.

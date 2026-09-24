@@ -11,6 +11,18 @@ on:
         description: "Chat de Telegram al que enviar las laminas (vacio = todos los de CHAT_ID)"
         required: false
         default: ""
+      # Los dos los pone el Worker cuando la edicion NO estaba en cache: en vez
+      # de armarla dentro de ctx.waitUntil() (que Cloudflare corta a los ~30 s
+      # sin avisar, y con cuatro noticias no le da), la arma render.py pidiendola
+      # por HTTP, y este workflow manda texto y laminas. Ver enviarEntorno().
+      con_texto:
+        description: "1 = mandar tambien el texto de la edicion antes de las laminas"
+        required: false
+        default: ""
+      forzar:
+        description: "1 = rearmar la edicion aunque haya una en cache"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -22,6 +34,9 @@ concurrency:
 jobs:
   laminas:
     runs-on: ubuntu-latest
+    # Armar la edicion en frio (IA + cinco fotos) mas ocho capturas de Chrome.
+    # Holgado, pero con tope: una fuente colgada no puede tener el job horas.
+    timeout-minutes: 25
     env:
       TZ: America/Caracas
     steps:
@@ -42,7 +57,8 @@ jobs:
         env:
           WEBHOOK_SECRET: ${{ secrets.WEBHOOK_SECRET }}
           CHROME_BIN: google-chrome
-        run: python entorno/render.py
+          FORZAR: ${{ inputs.forzar }}
+        run: python entorno/render.py $([ "$FORZAR" = "1" ] && echo --forzar)
 
       - name: Enviar por Telegram
         env:
@@ -50,7 +66,8 @@ jobs:
           # Si el bot paso un chat, van solo a ese; si se dispara a mano desde
           # la pestana Actions, van a todos los destinatarios de siempre.
           CHAT_ID: ${{ inputs.chat != '' && inputs.chat || secrets.CHAT_ID }}
-        run: python entorno/send_telegram.py
+          CON_TEXTO: ${{ inputs.con_texto }}
+        run: python entorno/send_telegram.py $([ "$CON_TEXTO" = "1" ] && echo --con-texto)
 
       - name: Guardar laminas como artefacto
         if: always()
