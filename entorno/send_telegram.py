@@ -103,8 +103,11 @@ def main():
         dest = OUT / args[0]
     else:
         # La carpeta la nombra render.py con la fecha DE LA EDICION, que no es
-        # la de hoy si se sirvio una de cache: se coge la mas reciente.
-        carpetas = sorted(p for p in OUT.glob("20*") if p.is_dir())
+        # la de hoy si se sirvio una de cache: se coge la ULTIMA QUE SE ESCRIBIO,
+        # no la de nombre mas alto. Por nombre, una prueba con fecha futura se
+        # habria mandado en lugar de la edicion recien dibujada.
+        carpetas = sorted((p for p in OUT.glob("20*") if p.is_dir()),
+                          key=lambda p: p.stat().st_mtime)
         dest = carpetas[-1] if carpetas else OUT / date.today().isoformat()
     fecha = dest.name
     laminas = ordenadas(dest)

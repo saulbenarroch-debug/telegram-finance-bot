@@ -319,7 +319,11 @@ document.fonts.ready.then(function () {
     var p = el.dataset.fit.split(':'), modo = p[0], max = parseFloat(p[1]);
     var base = parseFloat(getComputedStyle(el).fontSize), fs = base, n = 0;
     var mide = function () { return modo === 'w' ? el.scrollWidth : el.scrollHeight; };
-    while (mide() > max + 0.5 && fs > base * 0.5 && n < 80) {
+    // En las cajas que envuelven se mira TAMBIEN el ancho: una palabra larga
+    // no se parte y se sale por el lado aunque el alto quepa. Paso con el
+    // subtitulo de cabecera, cuya caja llega justo al filo de la pagina.
+    var ancha = function () { return modo === 'h' && el.scrollWidth > el.clientWidth + 1; };
+    while ((mide() > max + 0.5 || ancha()) && fs > base * 0.5 && n < 80) {
       fs *= 0.97; el.style.fontSize = fs + 'px'; n++;
     }
     if (n) el.setAttribute('data-encogido', (fs / base).toFixed(2));
@@ -505,8 +509,14 @@ def html_noticia(ed, fotos, notas, latam, k):
             "font-size:46.16px;line-height:0.8;transform:rotate(-90deg);"), esc(n.get("tema", ""))),
         "<div class='a i tt sub' data-fit='h:200' style='%s'>%s</div>" % (caja(
             116.50, 1758.42, 972.88, None, "font-size:93.35px;"), esc(n.get("subtitulo", ""))),
+        # La caja de la plantilla llega justo al filo de la pagina (926,59 +
+        # 660,81 = 1587,4). Con el subtitulo corto del ejemplo no se notaba; con
+        # uno largo, la ultima palabra tocaba el borde. El relleno lo deja
+        # acabar donde acaba SURECONOMICS (1517,6), el margen derecho que la
+        # pagina ya tiene.
         "<div class='a i tt sub' data-fit='h:170' style='%s'>%s</div>" % (caja(
-            926.59, 379.66, 660.81, None, "font-size:63.40px;"), esc(n.get("subtitulo", ""))),
+            926.59, 379.66, 660.81, None, "font-size:63.40px;padding-right:69.8px;"),
+            esc(n.get("subtitulo", ""))),
         "<div class='a i tt dcha' style='%s'>(%02d)</div>" % (caja(
             616.50, 203.37, 168.26, None,
             "font-size:73.07px;line-height:0.8;color:#ec2736;"), k + 1),
