@@ -1426,14 +1426,22 @@ function promptEntorno(d, noticias) {
     "exactamente 3 párrafos cortos separados por una línea en blanco, entre los " +
     "tres como máximo 700 caracteres: (1) el hecho y sus cifras, (2) su alcance, " +
     "(3) el contexto.\n" +
-    "LECTURA: nuestra lectura en un párrafo de máximo 280 caracteres: qué " +
-    "significa y qué toca vigilar.\n" +
-    "TEXTO2: un párrafo de máximo 280 caracteres que desarrolle el SUBTITULO " +
-    "con un HECHO distinto del cuerpo, sacado de los titulares: una decisión, " +
-    "una reacción, una medida (tras los terremotos, «la OFAC emitió la Licencia " +
-    "General 60…»). No una conclusión ni un resumen de lo ya dicho. Si no hay " +
-    "segundo hecho en los titulares, cuenta una consecuencia concreta del " +
-    "primero sin añadir cifras.\n" +
+    // TRES VIÑETAS DESDE EL 24/09/2026, cuando Edición quitó de la plantilla el
+    // segundo bloque (el subtítulo repetido abajo con su párrafo) y dejó en la
+    // franja negra tres «▪». Lo que iba en ese bloque, un hecho distinto del
+    // cuerpo, pasa a ser la segunda viñeta.
+    // «De la MISMA historia» va en mayúsculas porque la primera prueba, pidiendo
+    // solo "un hecho distinto del cuerpo", puso en la página de la Bolsa de
+    // Caracas el titular de los expropiados por Chávez: otro hecho, sí, pero de
+    // otra noticia. Y el mínimo de 150 caracteres, porque sin él salían viñetas
+    // de 60 y la franja, pensada para tres de unos 330, quedaba medio vacía.
+    "LECTURA: nuestra lectura en exactamente 3 viñetas, una por línea, cada " +
+    "una empezando con «▪ » y de entre 150 y 250 caracteres, todas sobre ESTA " +
+    "noticia: (1) qué significa; (2) otro hecho de la MISMA historia que no " +
+    "esté en el cuerpo -una reacción, una medida, un antecedente- sacado de los " +
+    "titulares, o, si no lo hay, a quién afecta y cómo, sin añadir cifras; " +
+    "(3) qué toca vigilar. Ninguna repite lo que ya dice el cuerpo ni habla de " +
+    "otra noticia de la lista.\n" +
     "###LATAM\n" +
     "Exactamente 4 párrafos de países DISTINTOS de América Latina (Estados " +
     "Unidos, Europa y Asia NO cuentan como país de la región, aunque la noticia " +
@@ -1503,7 +1511,15 @@ function parseNoticia(bloque) {
     sumario: out.SUMARIO || "",
     fuente: parseInt((out.FUENTE || "").match(/\d+/) || [NaN], 10),
     cuerpo: out.CUERPO || "",
-    lectura: (out.LECTURA || "").replace(/^[▪•\-\s]+/, ""),
+    // Las viñetas, sin su marca: la pone render.py, que es quien dibuja. Una
+    // por línea; si el modelo las junta en un párrafo, queda una sola.
+    lectura: (out.LECTURA || "")
+      .split(/\n+/)
+      .map((l) => l.replace(/^[\s▪•\-*]+/, "").trim())
+      .filter(Boolean)
+      .slice(0, 3),
+    // Ya no se pide (ver LECTURA en promptEntorno); se lee por si una edición
+    // vieja lo trae.
     texto2: out.TEXTO2 || "",
   };
 }
@@ -1690,7 +1706,7 @@ function textoNoticia(n) {
   return (
     "<b>(0" + n.numero + ") " + escapeHtml(n.tema) + " · " + escapeHtml(n.titulo) + "</b>\n\n" +
     escapeHtml(n.cuerpo) +
-    (n.lectura ? "\n\n▪ <i>" + escapeHtml(n.lectura) + "</i>" : "") +
+    [].concat(n.lectura || []).map((l) => "\n\n▪ <i>" + escapeHtml(l) + "</i>").join("") +
     (n.texto2 ? "\n\n<b>" + escapeHtml(n.subtitulo) + "</b>\n" + escapeHtml(n.texto2) : "") +
     (n.url ? '\n\n<a href="' + escapeHtml(n.url) + '">Fuente: ' + escapeHtml(n.medio || "nota original") + "</a>" : "")
   );

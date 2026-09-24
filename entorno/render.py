@@ -541,6 +541,20 @@ def html_indice(ed, fotos, notas, latam):
     return pagina("".join(partes), fondo="#fff")
 
 
+def vinetas(n):
+    """Las viñetas de la lectura, vengan como vengan.
+
+    Desde el 24/09/2026 el Worker las manda en lista. Una edicion de antes trae
+    la lectura en un solo texto y el segundo hecho aparte, en 'texto2': se
+    muestran como dos vinetas, que es lo mas parecido a lo que pide ahora la
+    plantilla.
+    """
+    lect = n.get("lectura") or []
+    if isinstance(lect, str):
+        lect = [lect]
+    return [v for v in list(lect) + [n.get("texto2") or ""] if v and v.strip()][:3]
+
+
 def html_noticia(ed, fotos, notas, latam, k):
     n = notas[k]
     ps = parrafos(n.get("cuerpo", ""))
@@ -553,10 +567,13 @@ def html_noticia(ed, fotos, notas, latam, k):
         "<div class='a' style='%s'></div>" % caja(-28.36, 1488.02, 1870.08, 858.39, "background:#000;"),
         "<div class='a i just' data-fit='h:843' style='%s'>%s</div>" % (caja(
             747.89, 624.24, 727.61, None, "font-size:32.43px;line-height:1.4;color:#000;"), cuerpo),
-        "<div class='a i just' data-fit='h:206' style='%s'>▪ %s</div>" % (caja(
-            116.50, 1531.92, 1331.76, None, "font-size:32.43px;line-height:1.4;"), esc(n.get("lectura", ""))),
-        "<div class='a i just' data-fit='h:215' style='%s'>%s</div>" % (caja(
-            123.77, 1995.05, 1324.49, None, "font-size:32.43px;line-height:1.4;"), esc(n.get("texto2", ""))),
+        # LAS TRES VINETAS DE LA FRANJA NEGRA. Edicion cambio la plantilla el
+        # 24/09/2026: quito el segundo bloque (el subtitulo repetido abajo y su
+        # parrafo) y dejo aqui tres "▪" en una caja mas alta. Una por linea, sin
+        # hueco entre ellas, como en la plantilla.
+        "<div class='a i just' data-fit='h:600' style='%s'>%s</div>" % (caja(
+            115.39, 1586.36, 1356.61, None, "font-size:32.43px;line-height:1.4;"),
+            "<br>".join("▪ " + esc(v) for v in vinetas(n))),
         "<div class='a mo' style='%s'>SURECONOMICS</div>" % caja(
             1136.63, 106.46, 380.94, None, "font-size:33.33px;line-height:1.4;text-align:right;"),
         "<div class='a i tt' data-fit='h:290' style='%s'>%s</div>" % (caja(
@@ -566,8 +583,6 @@ def html_noticia(ed, fotos, notas, latam, k):
         "<div class='a i tt una girado' data-fit='w:267' style='%s'>%s</div>" % (caja(
             -16.76, 333.08, 266.52, 54.46,
             "font-size:46.16px;line-height:0.8;transform:rotate(-90deg);"), esc(n.get("tema", ""))),
-        "<div class='a i tt sub' data-fit='h:200' style='%s'>%s</div>" % (caja(
-            116.50, 1758.42, 972.88, None, "font-size:93.35px;"), esc(n.get("subtitulo", ""))),
         # La caja de la plantilla llega justo al filo de la pagina (926,59 +
         # 660,81 = 1587,4). Con el subtitulo corto del ejemplo no se notaba; con
         # uno largo, la ultima palabra tocaba el borde. El relleno lo deja

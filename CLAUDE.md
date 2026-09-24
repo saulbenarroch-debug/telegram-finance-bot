@@ -128,6 +128,15 @@ estima a ojo**:
 - **Se comparó renglón a renglón** con la exportación: todos los textos caen a
   0-2 px de la plantilla.
 
+**La plantilla la sigue editando Edición, y hay que volver a leerla cuando
+cambia.** El mismo 24/09/2026 quitó de las páginas de noticia el segundo bloque
+(el subtítulo repetido abajo con su párrafo) y dejó en la franja negra **tres
+viñetas «▪»**. El modelo ahora escribe la lectura en tres puntos (`LECTURA`
+llega como lista) y `render.py` sigue aceptando ediciones viejas, con la lectura
+en un solo texto más el `texto2`, que salen como dos viñetas. Para ver qué
+cambió: leer el diseño por la API (geometría), exportar la página a
+`assets/referencia/` y comparar.
+
 ### Tres diferencias entre CSS y Canva que ya costaron una tarde
 
 1. **Dónde cae la primera línea.** CSS reparte el interlineado mitad arriba y
