@@ -156,6 +156,65 @@ def recurso_privado(nombre):
     return ruta
 
 
+def og_imagen(url):
+    """El og:image de un articulo, pedido desde AQUI y no desde el Worker.
+
+    HAY MEDIOS QUE LE CIERRAN LA PUERTA A CLOUDFLARE. El 24/09/2026 la noticia
+    principal salio sin foto con una fuente de enlace directo (Efecto Cocuyo):
+    desde el Worker no hubo og:image y desde fuera estaba en el byte 3.544 del
+    HTML. Es lo mismo que le pasa a Groq con las IP de centros de datos. El
+    render corre en GitHub, desde otra red, asi que reintenta lo que el Worker
+    no consiguio. Un redirector de Google News no se intenta: no tiene foto.
+    """
+    if not url or "news.google." in url:
+        return ""
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, headers=NAV_UA), timeout=25) as r:
+            html = r.read(150000).decode("utf-8", "replace")
+    except Exception:
+        return ""
+    for patron in (r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)',
+                   r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image',
+                   r'<meta[^>]+name=["\']twitter:image["\'][^>]+content=["\']([^"\']+)'):
+        m = re.search(patron, html, re.I)
+        if m and m.group(1).startswith("http"):
+            return m.group(1).replace("&amp;", "&")
+    return ""
+
+
+def completar_fotos(notas, latam):
+    """Reintenta desde aqui las fotos que el Worker no pudo sacar."""
+    for n in notas:
+        if not n.get("imagen") and n.get("url"):
+            n["imagen"] = og_imagen(n["url"])
+            if n["imagen"]:
+                print(f"     foto de la noticia {n.get('numero')} recuperada desde aqui")
+    if not latam.get("imagen") and latam.get("url"):
+        latam["imagen"] = og_imagen(latam["url"])
+
+
+def fotos_portada(notas, fotos):
+    """(polaroid, fondo) de la portada: DOS FOTOS DISTINTAS, y las dos de la edicion.
+
+    Lo pidio Edicion al ver la primera edicion con la plantilla nueva: en el
+    fondo va una imagen de las noticias que contiene, y en la polaroid otra, que
+    no se repitan. La polaroid va encima del titular de la noticia principal, asi
+    que lleva su foto; si no la tiene, la primera noticia que si. El fondo es la
+    siguiente foto de la edicion que no sea la misma (y si solo hay una, la de
+    Latam). Se comparan los archivos, no las noticias: dos noticias de una misma
+    fuente traen la misma foto.
+    """
+    def bytes_de(p):
+        return p.read_bytes() if p else b""
+    orden = [fotos.get("n%d" % (k + 1)) for k in range(len(notas))] + [fotos.get("latam")]
+    disponibles = [p for p in orden if p]
+    if not disponibles:
+        return None, None
+    polaroid = disponibles[0]
+    fondo = next((p for p in disponibles[1:] if bytes_de(p) != bytes_de(polaroid)), None)
+    return polaroid, fondo
+
+
 def edicion_normalizada(ed):
     """Las cuatro noticias y el bloque Latam, vengan en el formato que vengan.
 
@@ -397,16 +456,16 @@ MARCO = ("M743.42 0C681.29.01 617.1.23 562.36.84 393.42 2.73 155.78 8.41 79.51 1
 
 def html_portada(ed, fotos, notas, latam):
     n = notas[0] if notas else {}
-    foto = fotos.get("n1")
+    polaroid, fondo = fotos_portada(notas, fotos)
     anio, mes, dia = ed["hoy"][:10].split("-")  # la plantilla usa DD/MM/AA
     px, py, pw, ph = en_unidades(PILA)
     partes = []
-    if foto:
+    if fondo:
         # La plantilla deja la foto de fondo casi negra: medida sobre su
         # exportacion, una luminancia media de 12 a 14 sobre 255. Una foto de
         # prensa normal ronda 110, de ahi el 0,13.
         partes.append("<img class='a foto' src='%s' style='%s'>" % (
-            uri(foto), caja(0, 0, CW, CH, "filter:brightness(0.13);")))
+            uri(fondo), caja(0, 0, CW, CH, "filter:brightness(0.13);")))
     partes.append(lineas_dobles())
     partes.append("<div class='a' style='%s'></div>" % caja(
         178.44, 297.70, 297.73, 75.97, "border:4px solid #fff;border-radius:38px;"))
@@ -419,13 +478,13 @@ def html_portada(ed, fotos, notas, latam):
     pila = recurso_privado("pila.png")
     if pila:
         partes.append("<img class='a' src='%s' style='%s'>" % (uri(pila), caja(px, py, pw, ph)))
-    if foto:
+    if polaroid:
         partes.append(
             "<svg class='a' style='%s' viewBox='0 0 1023.224 727.632'>"
             "<defs><clipPath id='marco'><path d='%s'/></clipPath></defs>"
             "<image href='%s' x='0' y='0' width='1023.224' height='727.632' "
             "preserveAspectRatio='xMidYMid slice' clip-path='url(#marco)'/></svg>"
-            % (caja(551.57, 1027.83, 562.42, 399.94, "opacity:0.9;"), MARCO, uri(foto)))
+            % (caja(551.57, 1027.83, 562.42, 399.94, "opacity:0.9;"), MARCO, uri(polaroid)))
     partes.append("<div class='a' style='%s'></div>" % caja(0, 1712.94, 1652.75, 532.10, "background:#000;"))
     partes.append("<div class='a hg' style='%s'>Resumen semanal</div>" % caja(
         158.74, 1796.96, None, None, "font-size:51.90px;line-height:0.96;letter-spacing:0.072em;"))
@@ -725,6 +784,7 @@ def main():
     (dest / "edicion.json").write_text(json.dumps(ed, ensure_ascii=False, indent=1), encoding="utf-8")
 
     notas, latam = edicion_normalizada(ed)
+    completar_fotos(notas, latam)
     print(f"{len(notas)} noticias · Latam con {len(latam.get('items') or [])} párrafos")
     fotos = {}
     for k, n in enumerate(notas):
