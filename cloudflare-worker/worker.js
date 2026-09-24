@@ -134,7 +134,14 @@ const DIARIO_CRON = "0 12,18 * * 1-5";
 // No esta demostrado que esa sea la causa -tambien pudo ser que un cron recien
 // creado tarde en activarse-, y por eso queda escrito: si algun dia esto vuelve
 // a fallar, empieza por aqui en vez de repetir la investigacion entera.
-const VIGILANCIA_CRON = "*/15 11,12,13,14,15,16,17,18,19,20,21,22,23 * * 1-5";
+// CADA MEDIA HORA DESDE EL 24/09/2026, Y NO CADA CUARTO: por los minutos de
+// Actions. vigilancia.yml corre en sureconomics-medio, que es PRIVADO y tiene
+// 2.000 minutos gratis al mes. Cada cuarto de hora eran 52 rondas al dia y unos
+// 1.600 minutos al mes solo de vigilancia: con las tandas y los /nota, el mes
+// de septiembre llego al 90 % el dia 24. Cada media hora son ~800. Decision del
+// dueno "por ahora": si se paga el exceso ($0,006 el minuto), se puede volver
+// a cada cuarto de hora sabiendo que son unos $6 al mes.
+const VIGILANCIA_CRON = "0,30 11,12,13,14,15,16,17,18,19,20,21,22,23 * * 1-5";
 // Repo donde vive el workflow que dibuja las laminas (Chrome headless no corre
 // en un Worker, asi que el render se delega a GitHub Actions).
 const GITHUB_REPO = "saulbenarroch-debug/telegram-finance-bot";

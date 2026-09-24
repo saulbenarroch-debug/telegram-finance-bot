@@ -27,11 +27,12 @@ CRONS = [
     "0 */3 * * *",     # cada 3 horas: ingiere noticias, tasa BCV e IBC al historial
     "0 12 * * 1",      # lunes 12:00 UTC = 8:00 a.m. VET: prearma "Entorno en Vinetas"
     "0 12,18 * * 1-5",  # 8:00 a.m. y 2:00 p.m. VET: las dos tandas del medio
-    # Vigilancia del medio cada cuarto de hora, 7:00 a 19:00 VET. Estaba en el
+    # Vigilancia del medio cada MEDIA hora (desde el 24/09/2026, por los minutos
+    # de Actions del repo privado; ver VIGILANCIA_CRON), 7:00 a 19:00 VET. Estaba en el
     # schedule: de GitHub y llegaba de 20 min a 2 h tarde; dos rondas del
     # 16-18/09/2026 aparecieron pasada la medianoche, cuando ya no hay nadie
     # leyendo. No cuesta cuota de IA: vigilar.py no llama a Gemini ni a Tavily.
-    "*/15 11,12,13,14,15,16,17,18,19,20,21,22,23 * * 1-5",
+    "0,30 11,12,13,14,15,16,17,18,19,20,21,22,23 * * 1-5",
 ]
 
 load_dotenv(ENV_PATH)
