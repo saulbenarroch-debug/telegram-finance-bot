@@ -292,6 +292,23 @@ Si tocas un prompt, respeta:
 
 ## IA: cadena de respaldo
 
+**Dos cuentas de Gemini desde el 25/09/2026** (`GEMINI_API_KEY` y
+`GEMINI_API_KEY_RESERVA`, las mismas del motor), y el embudo va **primero por
+modelo y luego por cuenta** (`embudoGemini` en `worker.js`):
+
+- **Entorno en Viñetas:** flash principal → flash reserva → flash-lite
+  principal → flash-lite reserva → Groq. Si el flash falla por saturación (5xx)
+  en las dos cuentas, espera 30 s y lo reintenta antes de bajar: es una llamada
+  por semana y es lo que se publica. `escrita_por` queda en la edición.
+- **Chat:** flash-lite primero, como siempre (muchas preguntas cortas), ahora
+  con la segunda cuenta en cada escalón y sin esperas.
+
+Antes el Worker usaba solo la principal: cuando se agotaba su flash, el Entorno
+lo escribía flash-lite con el flash de la reserva intacto. **Las dos cuentas son
+las mismas que usa el motor**, así que la cuota diaria es compartida: las
+tandas de la mañana gastan flash antes que el Entorno del lunes.
+
+La cadena del bot de resúmenes (`bot.py`) sigue siendo:
 `gemini-3.5-flash-lite` → `gemini-3.5-flash` → `openai/gpt-oss-120b` (Groq).
 
 > Revisado contra `/models` el 28/08/2026. Este apartado decía

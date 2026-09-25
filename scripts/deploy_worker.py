@@ -40,6 +40,8 @@ CF_TOKEN = os.environ["CLOUDFLARE_API_TOKEN"].strip()
 CF_ACCT = os.environ["CLOUDFLARE_ACCOUNT_ID"].strip()
 TG = os.environ["TELEGRAM_TOKEN"].strip()
 GEM = os.environ.get("GEMINI_API_KEY", "").strip()
+# La segunda cuenta del embudo (ver embudoGemini en worker.js). Opcional.
+GEM_RESERVA = os.environ.get("GEMINI_API_KEY_RESERVA", "").strip()
 GROQ = os.environ.get("GROQ_API_KEY", "").strip()
 TAVILY = os.environ.get("TAVILY_API_KEY", "").strip()
 # PAT de GitHub (Actions: read/write) para que el bot dispare el render de las
@@ -94,6 +96,7 @@ def main():
         "bindings": [
             {"type": "secret_text", "name": "TELEGRAM_TOKEN", "text": TG},
             {"type": "secret_text", "name": "GEMINI_API_KEY", "text": GEM},
+            {"type": "secret_text", "name": "GEMINI_API_KEY_RESERVA", "text": GEM_RESERVA},
             {"type": "secret_text", "name": "GROQ_API_KEY", "text": GROQ},
             {"type": "secret_text", "name": "TAVILY_API_KEY", "text": TAVILY},
             {"type": "secret_text", "name": "GITHUB_PAT", "text": GH_PAT},

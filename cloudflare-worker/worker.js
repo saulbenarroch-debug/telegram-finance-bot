@@ -1,5 +1,6 @@
 // Sureconomics — bot conversacional con memoria (Cloudflare Worker + KV)
-// Bindings necesarios: TELEGRAM_TOKEN, GEMINI_API_KEY, GROQ_API_KEY,
+// Bindings necesarios: TELEGRAM_TOKEN, GEMINI_API_KEY (y GEMINI_API_KEY_RESERVA,
+// opcional: la segunda cuenta del embudo), GROQ_API_KEY,
 //                      WEBHOOK_SECRET, y KV (namespace de Cloudflare KV).
 
 // Los 2.5 dan 404 en proyectos nuevos ("no longer available to new users").
@@ -290,6 +291,7 @@ export default {
                 datos: ed.datos,
                 secciones: ed.secciones || {},
                 noticias: ed.noticias || [],
+                escrita_por: ed.escrita_por || "",
                 latam: ed.latam || null,
                 portada: ed.portada || null,
                 titulares: ed.titulares || [],
@@ -780,21 +782,69 @@ function buildPrompt(question, live, stored, history) {
 
 async function aiAnswer(env, question, live, stored, history) {
   const prompt = buildPrompt(question, live, stored, history);
-  for (const model of GEMINI_MODELS) {
-    try {
-      return await callGemini(env, model, prompt);
-    } catch (e) {}
-  }
+  // El chat va con flash-lite primero (GEMINI_MODELS), como siempre: son muchas
+  // preguntas al día y cortas. Lo nuevo es la segunda cuenta en cada escalón.
+  const r = await embudoGemini(env, GEMINI_MODELS, prompt);
+  if (r) return r.texto;
   if (env.GROQ_API_KEY) return await callGroq(env, prompt);
   throw new Error("no AI available");
 }
 
-async function callGemini(env, model, prompt) {
+// LAS CUENTAS DE GEMINI, EN ORDEN. La reserva es opcional: si el binding no
+// existe, llega vacío y se descarta, y todo sigue con una sola.
+function clavesGemini(env) {
+  return [["principal", env.GEMINI_API_KEY], ["reserva", env.GEMINI_API_KEY_RESERVA]]
+    .filter((c) => c[1] && String(c[1]).trim());
+}
+
+// EL EMBUDO: PRIMERO EL MODELO, LUEGO LA CUENTA. Con [flash, flash-lite] el
+// orden es flash de la principal, flash de la reserva, flash-lite de la
+// principal y flash-lite de la reserva. Es el mismo orden que motor/ia.py del
+// medio, decisión del dueño el 25/09/2026: antes el Worker ni siquiera tenía la
+// segunda cuenta, y cuando la principal agotaba flash el Entorno lo escribía
+// flash-lite, que se saltaba los topes y repetía hechos entre noticias.
+//
+// esperaSaturado (segundos): SATURADO NO ES SIN CUOTA. Si un modelo falla por
+// 5xx en todas las cuentas, Google está saturado y no agotado; se espera y se
+// vuelve a probar ESE modelo antes de bajar al siguiente. Lo usa el Entorno:
+// una llamada por semana y es lo que se publica. La primera prueba del embudo
+// nuevo, el 25/09/2026, dio 503 en el flash de las dos cuentas y sin esto lo
+// habría escrito flash-lite. El chat no lo usa: ahí la respuesta tiene que ser
+// rápida y corre dentro de los ~30 s de waitUntil.
+//
+// Devuelve { texto, quien } o null si no respondió ninguna combinación.
+async function embudoGemini(env, modelos, prompt, esperaSaturado) {
+  const claves = clavesGemini(env);
+  for (const model of modelos) {
+    const vueltas = esperaSaturado ? 2 : 1;
+    for (let vuelta = 0; vuelta < vueltas; vuelta++) {
+      if (vuelta === 1) {
+        console.log("[gemini] " + model + " saturado en todas las cuentas; espero " + esperaSaturado + " s");
+        await new Promise((r) => setTimeout(r, esperaSaturado * 1000));
+      }
+      let saturado = false;
+      for (const [nombre, clave] of claves) {
+        try {
+          const texto = await callGemini(env, model, prompt, clave);
+          return { texto: texto, quien: model + (claves.length > 1 ? " (" + nombre + ")" : "") };
+        } catch (e) {
+          const msg = String((e && e.message) || e);
+          if (/ 5\d\d$/.test(msg)) saturado = true;
+          console.log("[gemini] " + model + " (" + nombre + "): " + msg.slice(0, 80));
+        }
+      }
+      if (!saturado) break;
+    }
+  }
+  return null;
+}
+
+async function callGemini(env, model, prompt, clave) {
   const url =
     "https://generativelanguage.googleapis.com/v1beta/models/" +
     model +
     ":generateContent?key=" +
-    env.GEMINI_API_KEY;
+    (clave || env.GEMINI_API_KEY);
   const r = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -1578,7 +1628,9 @@ async function buildEntorno(env) {
   );
   const noticias = seleccionarNoticias(mergeNews(curadas, delHistorial, 120));
 
-  const crudo = await aiEntorno(env, promptEntorno(datos, noticias));
+  const redaccion = await aiEntorno(env, promptEntorno(datos, noticias));
+  const crudo = redaccion.texto;
+  console.log("[entorno] la escribió " + redaccion.quien);
   const s = parseSecciones(crudo);
 
   // FOTOS: UNA POR NOTICIA Y OTRA PARA LATAM, Y NINGUNA REPETIDA.
@@ -1687,6 +1739,7 @@ async function buildEntorno(env) {
     secciones: s,
     noticias: notas,
     latam: latam,
+    escrita_por: redaccion.quien,
     // 'portada' es lo que leía render.py antes de las cuatro noticias. Se deja
     // apuntando a la principal para que un render viejo no se quede sin foto.
     portada: principal
@@ -2485,13 +2538,12 @@ async function dispararLaminas(env, chatId, opciones) {
 
 // IA para el newsletter. A diferencia del chat, aquí se prueba PRIMERO el modelo
 // grande: es una sola llamada por semana y la redacción es lo que se publica.
+// Devuelve { texto, quien }: quién la escribió queda guardado en la edición,
+// porque la calidad cambia mucho entre flash y flash-lite y así se sabe.
 async function aiEntorno(env, prompt) {
-  for (const model of GEMINI_MODELS.slice().reverse()) {
-    try {
-      return await callGemini(env, model, prompt);
-    } catch (e) {}
-  }
-  if (env.GROQ_API_KEY) return await callGroq(env, prompt);
+  const r = await embudoGemini(env, ["gemini-3.5-flash", "gemini-3.5-flash-lite"], prompt, 30);
+  if (r) return r;
+  if (env.GROQ_API_KEY) return { texto: await callGroq(env, prompt), quien: "groq" };
   throw new Error("no AI available");
 }
 
