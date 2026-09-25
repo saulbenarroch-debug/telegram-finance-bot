@@ -95,6 +95,40 @@ def enviar_texto(token, chat, partes):
             print("ERR texto chat", chat, e.code, e.read()[:200])
 
 
+def ofrecer_boletin(token, chat):
+    """El boton "Subir al boletin", en un mensaje aparte debajo del album.
+
+    Aparte porque Telegram no deja poner botones en un album de fotos. Y SOLO EN
+    LOS CHATS DE LA REDACCION (REDACCION_IDS): /entorno lo puede pedir cualquiera
+    que hable con el bot, y este boton termina en un correo a toda la lista de
+    suscriptores del sitio. La misma comprobacion se repite en el Worker al
+    tocarlo, por si el mensaje se reenvia.
+
+    Lleva el numero de ESTA corrida: boletin.yml se baja su artefacto y sube
+    exactamente las laminas que se acaban de mandar. Fuera de Actions no hay
+    corrida y no se ofrece.
+    """
+    corrida = os.environ.get("GITHUB_RUN_ID", "").strip()
+    redaccion = {c.strip() for c in os.environ.get("REDACCION_IDS", "").split(",") if c.strip()}
+    if not corrida or str(chat) not in redaccion:
+        return
+    cuerpo = json.dumps({
+        "chat_id": chat,
+        "text": "¿Lo subo al boletín del sitio? Queda activo y el lunes a las 9:00 sale "
+                "solo por correo a toda la lista. Hasta entonces se puede volver a "
+                "borrador desde el panel.",
+        "reply_markup": {"inline_keyboard": [[
+            {"text": "📤 Subir al boletín", "callback_data": "boletin:" + corrida}]]},
+    }).encode("utf-8")
+    try:
+        urllib.request.urlopen(urllib.request.Request(
+            f"https://api.telegram.org/bot{token}/sendMessage", data=cuerpo,
+            headers={"Content-Type": "application/json"}), timeout=60).read()
+        print("OK  chat", chat, "-> boton del boletin")
+    except urllib.error.HTTPError as e:
+        print("ERR boton chat", chat, e.code, e.read()[:200])
+
+
 def main():
     env = load_env()
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
@@ -124,6 +158,7 @@ def main():
         try:
             r = enviar(env["TELEGRAM_TOKEN"], chat, laminas, pie)
             print("OK  chat", chat, "->", len(r.get("result", [])), "fotos")
+            ofrecer_boletin(env["TELEGRAM_TOKEN"], chat)
         except urllib.error.HTTPError as e:
             fallos += 1
             print("ERR chat", chat, e.code, e.read()[:300])

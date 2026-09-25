@@ -2074,6 +2074,30 @@ async function comandoBoton(env, cq) {
     return;
   }
 
+  // "boletin:<corrida>" SUBE EL ENTORNO AL BOLETÍN DEL SITIO Y LO DEJA ACTIVO:
+  // el lunes a las 9:00 sale por correo a toda la lista. Es de lo poco de este
+  // bot que acaba publicado sin más revisión, y por eso: solo la redacción (la
+  // comprobación de arriba), solo al tocarlo alguien que acaba de ver el álbum,
+  // y el botón se quita en cuanto se toca, para que dos toques no suban dos
+  // veces. subir_boletin.py tampoco pisa un número que ya tenga páginas.
+  //
+  // La corrida es la de entorno.yml que dibujó esas láminas: boletin.yml se baja
+  // su artefacto y sube exactamente lo que estaba en el chat.
+  if (partes[0] === "boletin") {
+    const corrida = String(partes[1] || "").replace(/\D/g, "");
+    if (!corrida) {
+      await responder("No sé de qué edición es ese botón.");
+      return;
+    }
+    await responder("Lo subo al boletín.");
+    await quitarBotones(env, cq.message, "📤 Subiendo al boletín… te aviso aquí cuando esté.");
+    const lanzado = await dispararEnBot(env, "boletin.yml", { corrida: corrida, chat: String(chatId) });
+    if (!lanzado) {
+      await sendMessage(env, chatId, "⚠️ No pude lanzar la subida al boletín. No se envió nada; vuelve a pedir /entorno en un momento.");
+    }
+    return;
+  }
+
   // "post:<id>" TAMPOCO REDACTA NADA. La pieza ya esta publicada: post.yml la
   // lee del panel y dibuja la lamina. Hasta el 23/09/2026 este boton no
   // existia y la unica salida del aviso «esa ya esta publicada» era
@@ -2380,6 +2404,51 @@ async function comandoNota(env, chatId, text, quien, tipo, autor) {
 }
 
 // Dispara el workflow "Entorno en Vinetas" pasandole el chat que lo pidio.
+// Dispara un workflow de ESTE repo (el del bot), no el del medio. dispararWorkflow
+// apunta al medio, que es privado y va justo de minutos de Actions; lo que no
+// necesita el motor corre aquí, que es público y gratis.
+async function dispararEnBot(env, archivo, inputs) {
+  if (!env.GITHUB_PAT) return false;
+  try {
+    const r = await fetch(
+      "https://api.github.com/repos/" + GITHUB_REPO + "/actions/workflows/" + archivo + "/dispatches",
+      {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer " + env.GITHUB_PAT,
+          Accept: "application/vnd.github+json",
+          "X-GitHub-Api-Version": "2022-11-28",
+          "User-Agent": "sureconomics-bot",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ ref: "main", inputs: inputs }),
+      }
+    );
+    return r.status === 204;
+  } catch {
+    return false;
+  }
+}
+
+// Cambia el texto del mensaje del botón y le quita el teclado. Sirve de acuse
+// ("subiendo…") y de cerrojo: sin botón no hay segundo toque. Si falla, no
+// pasa nada grave: boletin.yml tampoco sube dos veces el mismo número.
+async function quitarBotones(env, mensaje, texto) {
+  if (!mensaje || !mensaje.chat) return;
+  try {
+    await fetch("https://api.telegram.org/bot" + env.TELEGRAM_TOKEN + "/editMessageText", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: mensaje.chat.id,
+        message_id: mensaje.message_id,
+        text: texto,
+        reply_markup: { inline_keyboard: [] },
+      }),
+    });
+  } catch {}
+}
+
 // conTexto: el workflow manda también el texto de la edición, no solo las
 // láminas. Es lo que se pide cuando la edición se arma en frío desde Actions:
 // el chat no la tenía y no llegó a mandar nada. forzar: rearmarla aunque haya

@@ -67,6 +67,9 @@ jobs:
           # la pestana Actions, van a todos los destinatarios de siempre.
           CHAT_ID: ${{ inputs.chat != '' && inputs.chat || secrets.CHAT_ID }}
           CON_TEXTO: ${{ inputs.con_texto }}
+          # Para ofrecer el boton "Subir al boletin" solo a la redaccion: ese
+          # boton acaba en un correo a toda la lista del sitio.
+          REDACCION_IDS: ${{ secrets.REDACCION_IDS }}
         run: python entorno/send_telegram.py $([ "$CON_TEXTO" = "1" ] && echo --con-texto)
 
       - name: Guardar laminas como artefacto

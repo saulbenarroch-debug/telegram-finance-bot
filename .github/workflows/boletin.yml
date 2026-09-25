@@ -1,0 +1,83 @@
+name: Subir el Entorno al boletin
+
+# Lo dispara el boton "Subir al boletin" que va debajo del album de laminas del
+# Entorno en Vinetas. Sube las ocho laminas al numero del proximo lunes en el
+# panel y lo deja ACTIVO: el lunes a las 9:00 el sitio lo manda solo por correo
+# a toda la lista. Ver entorno/subir_boletin.py.
+#
+# SE SUBEN LAS LAMINAS QUE LA PERSONA VIO, NO OTRAS. El boton lleva el numero de
+# la corrida de entorno.yml que las dibujo, y aqui se baja su artefacto. Volver
+# a dibujarlas daria otra cosa si la edicion se rearmo entre medias, y lo que
+# se aprobo es lo que estaba en el chat.
+#
+# Corre en ESTE repo y no en el del medio porque este es publico: el medio es
+# privado y ya va justo de minutos de Actions.
+on:
+  workflow_dispatch:
+    inputs:
+      corrida:
+        description: "Numero de la corrida de entorno.yml que dibujo las laminas"
+        required: true
+      chat:
+        description: "Chat de Telegram al que contestar"
+        default: ""
+
+permissions:
+  contents: read
+  # Para bajarse el artefacto de OTRA corrida.
+  actions: read
+
+concurrency:
+  # Dos toques seguidos al boton no pueden subir dos veces a la vez: la segunda
+  # espera y, cuando entra, encuentra el numero ya relleno y no lo pisa.
+  group: boletin
+  cancel-in-progress: false
+
+jobs:
+  subir:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Solo para dejar las laminas a 1080 px en JPG, que es lo que pide el
+      # panel para el correo. No es una dependencia del repo: sin Pillow,
+      # subir_boletin.py sube las PNG tal cual.
+      - run: pip install pillow
+
+      - name: Bajar las laminas de aquella corrida
+        uses: actions/download-artifact@v4
+        with:
+          name: entorno-laminas
+          run-id: ${{ github.event.inputs.corrida }}
+          github-token: ${{ github.token }}
+          path: laminas
+
+      - name: Subirlas al boletin
+        env:
+          SURECONOMICS_USUARIO: ${{ secrets.SURECONOMICS_USUARIO }}
+          SURECONOMICS_CLAVE: ${{ secrets.SURECONOMICS_CLAVE }}
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          CHAT: ${{ github.event.inputs.chat }}
+        run: python entorno/subir_boletin.py laminas --chat "$CHAT"
+
+      # SI ALGO FALLA ANTES DE LLEGAR AL SCRIPT -el artefacto caduco (se guarda
+      # 30 dias) o el panel no contesta- se dice igual. Un boton que se toca y
+      # no contesta nunca es lo que hace parecer roto al bot.
+      - name: Avisar si fallo
+        if: failure()
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          CHAT: ${{ github.event.inputs.chat }}
+        run: |
+          python - <<'PY'
+          import json, os, urllib.request
+          t, c = os.environ.get("TELEGRAM_TOKEN", ""), os.environ.get("CHAT", "")
+          if t and c and not os.path.exists("avisado.flag"):
+              cuerpo = json.dumps({"chat_id": c, "text": "⚠️ No pude subir el Entorno al boletín. No se envió nada. Hay que mirarlo en Actions (Subir el Entorno al boletin)."}).encode()
+              urllib.request.urlopen(urllib.request.Request("https://api.telegram.org/bot%s/sendMessage" % t, data=cuerpo, headers={"Content-Type": "application/json"}), timeout=30)
+          PY

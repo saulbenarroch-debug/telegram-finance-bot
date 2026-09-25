@@ -194,6 +194,36 @@ frío `enviarEntorno()` lanza `entorno.yml` con `con_texto=1`, y es `render.py`
 quien pide la edición **por HTTP** —una petición no tiene ese corte mientras el
 cliente espere—; luego `send_telegram.py --con-texto` manda texto y láminas.
 
+### El botón «Subir al boletín»
+
+Debajo del álbum de láminas, **solo en los chats de `REDACCION_IDS`**, sale un
+botón que sube el Entorno al **boletín del sitio** y lo deja **activo**: el
+lunes a las 9:00 el sitio lo manda solo por correo a toda la lista. Es de lo
+poco de este bot que acaba publicado, y por eso tiene cuatro cerrojos:
+
+1. **Solo lo ve la redacción** (`send_telegram.ofrecer_boletin`) y el Worker lo
+   vuelve a comprobar al tocarlo, por si el mensaje se reenvía: `/entorno` lo
+   puede pedir cualquiera que hable con el bot.
+2. **Se quita en cuanto se toca** (`quitarBotones`), y `boletin.yml` va con
+   `concurrency`: dos toques no suben dos veces.
+3. **No se pisa nada.** El equipo crea los números de antemano, vacíos y en
+   borrador. `subir_boletin.py` rellena el del próximo lunes si está vacío; si
+   ya tiene páginas o ya está activo, no lo toca y lo dice.
+4. **Activo, no «Enviar ahora».** El panel permite mandarlo en el acto, a la
+   lista real y sin vuelta atrás; eso no se usa. Activo deja hasta el lunes
+   para arrepentirse: basta con volverlo a borrador en el panel → Boletín.
+
+**Se suben las láminas que se vieron, no otras**: el botón lleva el número de
+la corrida de `entorno.yml` que las dibujó y `boletin.yml` se baja su artefacto
+(dura 30 días). Van a 1080 px en JPG, que es lo que pide el panel para el correo
+(170-260 KB cada una), y la contraportada se usa como texto de vista previa.
+
+**El boletín del panel no es un formato de post**: son números, uno por lunes,
+hechos de páginas que son imágenes. La API se sacó del propio panel el
+25/09/2026 y está en la cabecera de `subir_boletin.py`. Corre en ESTE repo, que
+es público, y no en el del medio, que va justo de minutos de Actions; por eso
+aquí están también los secretos `SURECONOMICS_USUARIO` y `SURECONOMICS_CLAVE`.
+
 ## Reglas de oro (no negociables)
 
 1. **Nunca inventar cifras.** Las cifras las calcula el código; la IA solo
