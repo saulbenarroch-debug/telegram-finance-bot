@@ -155,16 +155,33 @@ cambió: leer el diseño por la API (geometría), exportar la página a
 ### Las fotos: cinco donde antes había una, y solo si son de su noticia
 
 - Salen del `og:image` del artículo fuente de cada noticia y de Latam. **Un
-  enlace de Google News no sirve**: es un redirector que solo salta con
-  JavaScript y no tiene foto. `enlaceDirecto()` busca la misma noticia en el
-  historial del KV, que sí trae enlaces del propio medio.
-- **Nunca se rellena con la foto de otro titular.** Sin foto, la página lleva
-  el mapa de puntos de la propia plantilla en el hueco. Una foto ajena encima
-  de una noticia ya dio, en el medio, un derrame petrolero ilustrando un
-  acuerdo energético.
-- **Cuántas páginas salen con foto depende de Tavily.** Sus búsquedas son las
-  que traen enlaces directos de medios venezolanos; con Tavily sin crédito, en
-  la primera prueba solo 1 de 5 páginas tuvo foto. Recargarlo mejora esto.
+  enlace de Google News no tiene foto**: es un redirector que solo salta con
+  JavaScript. El Worker busca la misma noticia en el historial del KV
+  (`enlaceDirecto()`), y lo que no consigue lo reintenta `render.py`
+  (`completar_fotos`) con tres escalones:
+  1. **resolver el enlace de Google** al artículo (`resolver_google_news`, vía
+     el endpoint interno `batchexecute`: NO es una API y puede cambiar; si
+     falla devuelve "" y se pasa al siguiente escalón) y pedir su `og:image`
+     desde GitHub;
+  2. la foto **del mismo hecho en otro medio** de `titulares` (tres palabras con
+     peso en común), porque hay medios que no dejan leer a nadie (France 24 da
+     403 o una página de desafío, también con cabeceras de navegador completas);
+  3. una foto **prestada** de otra noticia de la edición (`fotos_de_respaldo`).
+  Medido el 25/09/2026: se pasó de 1 de 5 fotos a 4 de 5; solo France 24 cayó
+  al escalón 3.
+- **TODA NOTICIA LLEVA IMAGEN DE FONDO desde el 25/09/2026**, por pedido de
+  Edición («sin quitar el mapa, solo una imagen de fondo»). Antes, sin foto,
+  el hueco quedaba en negro con el mapa. Ahora la foto prestada va **detrás del
+  mapa, oscurecida** (brillo 0,38): es fondo y no se lee como la foto de esa
+  noticia, que era lo que había que evitar (una foto ajena encima de una noticia
+  ya dio, en el medio, un derrame petrolero ilustrando un acuerdo energético).
+  En el índice, cada franja sin foto propia lleva la prestada con la opacidad de
+  la plantilla. Se prefiere la de Latam (no sale en el índice) y luego la de la
+  noticia más lejana, para que dos franjas vecinas no repitan.
+- **La página Latam lleva también foto de fondo detrás del mapa**, casi negra
+  (brillo 0,2) como la portada, y distinta de la del recuadro.
+- **Cuántas páginas salen con foto propia depende también de Tavily.** Sus
+  búsquedas son las que traen enlaces directos de medios venezolanos.
 
 ### Lo que la plantilla trae de relleno y NO se publica como dato
 

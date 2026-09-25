@@ -156,6 +156,60 @@ def recurso_privado(nombre):
     return ruta
 
 
+def resolver_google_news(url):
+    """El articulo real detras de un enlace de Google News, o "".
+
+    Esos enlaces son un redirector que solo salta con JavaScript: pedirlos da
+    una pagina de Google sin foto. Pero la propia pagina trae una firma
+    (data-n-a-sg) y una marca de tiempo (data-n-a-ts) con las que su endpoint
+    interno batchexecute devuelve la direccion del articulo. Probado el
+    25/09/2026 con los tres enlaces de Google de la edicion: los tres se
+    resolvieron (France 24, Univision, Hartford Courant).
+
+    ES UN ENDPOINT INTERNO DE GOOGLE, NO UNA API. Puede cambiar sin aviso; si
+    deja de funcionar, esto devuelve "" y la pagina cae al siguiente escalon
+    (ver completar_fotos), no se rompe. Se usa SOLO para sacar la foto: el
+    texto de las noticias sigue saliendo de lo que ya leyo el Worker.
+    """
+    if "news.google." not in (url or ""):
+        return url or ""
+    import urllib.parse
+    try:
+        ident = urllib.parse.urlparse(url).path.rstrip("/").split("/")[-1]
+        html = urllib.request.urlopen(urllib.request.Request(
+            "https://news.google.com/articles/%s" % ident, headers=NAV_UA), timeout=20).read().decode("utf-8", "replace")
+        sg = re.search(r'data-n-a-sg="([^"]+)"', html)
+        ts = re.search(r'data-n-a-ts="([^"]+)"', html)
+        if not (sg and ts):
+            return ""
+        carga = ('["garturlreq",[["X","X",["X","X"],null,null,1,1,"US:en",null,1,null,null,null,null,null,0,1],'
+                 '"X","X",1,[1,1,1],1,1,null,0,0,null,0],"%s",%s,"%s"]') % (ident, ts.group(1), sg.group(1))
+        cuerpo = urllib.parse.urlencode({"f.req": json.dumps([[["Fbv4je", carga, None, "generic"]]])}).encode()
+        r = urllib.request.urlopen(urllib.request.Request(
+            "https://news.google.com/_/DotsSplashUi/data/batchexecute", data=cuerpo,
+            headers=dict(NAV_UA, **{"Content-Type": "application/x-www-form-urlencoded;charset=UTF-8"})), timeout=20)
+        m = re.search(r'\\"garturlres\\",\\"(https?://[^\\"]+)', r.read().decode("utf-8", "replace"))
+        return m.group(1) if m else ""
+    except Exception:
+        return ""
+
+
+def palabras(t):
+    """Las palabras con peso de un titular. Es la misma medida que usa el Worker
+    (palabrasTitular) para decidir si dos titulares cuentan lo mismo."""
+    import unicodedata
+    t = unicodedata.normalize("NFD", str(t or "").lower())
+    t = "".join(c for c in t if not unicodedata.combining(c))
+    return {w for w in re.sub(r"[^a-z0-9 ]", " ", t).split() if len(w) > 3 and w not in VACIAS}
+
+
+# Palabras de mas de tres letras que no dicen de que va un titular. Sin esto,
+# «Dialogo SOBRE deuda» y «Marco Rubio SOBRE Venezuela» sumaban un punto.
+VACIAS = {"sobre", "para", "como", "desde", "entre", "hasta", "tras", "segun", "este", "esta",
+          "estos", "estas", "tiene", "hace", "dice", "donde", "cuando", "porque", "pero", "todo",
+          "todos", "mientras", "nuevo", "nueva", "ante", "contra", "durante"}
+
+
 def og_imagen(url):
     """El og:image de un articulo, pedido desde AQUI y no desde el Worker.
 
@@ -164,9 +218,11 @@ def og_imagen(url):
     desde el Worker no hubo og:image y desde fuera estaba en el byte 3.544 del
     HTML. Es lo mismo que le pasa a Groq con las IP de centros de datos. El
     render corre en GitHub, desde otra red, asi que reintenta lo que el Worker
-    no consiguio. Un redirector de Google News no se intenta: no tiene foto.
+    no consiguio. Un redirector de Google News se resuelve antes al articulo
+    (resolver_google_news): el redirector en si no tiene foto.
     """
-    if not url or "news.google." in url:
+    url = resolver_google_news(url)
+    if not url:
         return ""
     try:
         with urllib.request.urlopen(urllib.request.Request(url, headers=NAV_UA), timeout=25) as r:
@@ -182,15 +238,62 @@ def og_imagen(url):
     return ""
 
 
-def completar_fotos(notas, latam):
-    """Reintenta desde aqui las fotos que el Worker no pudo sacar."""
+def completar_fotos(notas, latam, titulares):
+    """Busca foto para cada noticia que llego sin ella. Tres escalones.
+
+    TODA NOTICIA LLEVA IMAGEN: lo exigio Edicion el 25/09/2026, viendo paginas
+    con el mapa solo y franjas del indice en negro. Por orden:
+
+      1. la del propio articulo, pedida desde aqui (hay medios que le cierran la
+         puerta a Cloudflare) y resolviendo antes el enlace de Google News;
+      2. la del MISMO HECHO en otro medio: un titular de la edicion que se le
+         parezca (tres palabras con peso en comun), porque hay medios que no
+         dejan leer su pagina a nadie (France 24 da 403);
+      3. y si no, fotos_de_respaldo() le presta otra de la edicion, que se
+         pinta oscurecida y con el mapa encima (ver foto_o_mapa).
+    """
     for n in notas:
-        if not n.get("imagen") and n.get("url"):
-            n["imagen"] = og_imagen(n["url"])
+        if n.get("imagen"):
+            continue
+        n["imagen"] = og_imagen(n.get("url", ""))
+        if n["imagen"]:
+            print(f"     foto de la noticia {n.get('numero')}: recuperada de su propio artículo")
+            continue
+        ref = palabras(" ".join([n.get("fuenteTitulo", ""), n.get("titulo", ""), n.get("sumario", "")]))
+        parecidos = sorted(((len(ref & palabras(t.get("t"))), t) for t in titulares
+                            if t.get("l") and t.get("l") != n.get("url")), key=lambda x: -x[0])
+        for comunes, t in parecidos[:4]:
+            if comunes < 3:
+                break
+            n["imagen"] = og_imagen(t["l"])
             if n["imagen"]:
-                print(f"     foto de la noticia {n.get('numero')} recuperada desde aqui")
+                print(f"     foto de la noticia {n.get('numero')}: del mismo hecho en otro medio («{t['t'][:50]}»)")
+                break
     if not latam.get("imagen") and latam.get("url"):
         latam["imagen"] = og_imagen(latam["url"])
+
+
+def fotos_de_respaldo(notas, fotos):
+    """Para cada hueco que se quedo sin foto propia, una prestada de la edicion.
+
+    Se pinta OSCURECIDA y con el mapa de la plantilla encima (ver foto_o_mapa):
+    es fondo, no ilustracion, y asi no se lee como si fuera la foto de esa
+    noticia. Se prefiere la de Latam, que no sale en el indice, y luego la de
+    la noticia mas lejana: en el indice las franjas van seguidas y dos vecinas
+    con la misma foto se notan.
+    """
+    claves = ["n%d" % (k + 1) for k in range(len(notas))] + ["latam"]
+    usadas = []
+    for i, c in enumerate(claves):
+        if fotos.get(c):
+            continue
+        candidatas = [fotos.get("latam")] + [fotos.get(claves[j]) for j in
+                                             sorted(range(len(notas)), key=lambda j: -abs(j - i))]
+        candidatas = [p for p in candidatas if p]
+        libres = [p for p in candidatas if p not in usadas] or candidatas
+        if libres:
+            fotos["respaldo_" + c] = libres[0]
+            usadas.append(libres[0])
 
 
 def fotos_portada(notas, fotos):
@@ -418,16 +521,23 @@ def lineas_dobles():
         -112.18, 82.30, 1793.90, 85.92, "border:3px solid #fff;")
 
 
-def foto_o_mapa(foto, left, top, w, h, opacidad=1.0):
+def foto_o_mapa(foto, left, top, w, h, opacidad=1.0, respaldo=None):
     """La foto de una pagina, o el mapa de puntos de la plantilla si no hay.
 
-    SIN FOTO NO SE PONE LA DE OTRA NOTICIA. Queda un cuadro negro con el mapa de
-    la propia plantilla: se lee como un recurso grafico del newsletter y no como
-    un hueco, y no le cuelga a una noticia la imagen de otra.
+    Sin foto propia queda el mapa de la plantilla, que se lee como un recurso
+    grafico del newsletter y no como un hueco. Hasta el 25/09/2026 iba sobre
+    negro liso; Edicion pidio entonces que DETRAS DEL MAPA HAYA SIEMPRE UNA
+    IMAGEN, «sin quitar el mapa». Va la de otra noticia de la edicion
+    (fotos_de_respaldo), muy oscurecida y con el mapa encima: asi es fondo y no
+    se lee como la foto de esta noticia, que es lo que se queria evitar antes.
     """
     if foto:
         return "<img class='a foto' src='%s' style='%s'>" % (
             uri(foto), caja(left, top, w, h, "opacity:%.2f;" % opacidad))
+    fondo = ""
+    if respaldo:
+        fondo = ("<img src='%s' style='position:absolute;left:0;top:0;width:100%%;height:100%%;"
+                 "object-fit:cover;filter:brightness(0.38) saturate(0.6)'>") % uri(respaldo)
     mx, my, mw, mh = en_unidades(MAPA)
     # Se centra en la parte VISIBLE de la caja: la de la foto de Latam desborda
     # la pagina por la derecha (asi esta en la plantilla) y la de las noticias
@@ -436,9 +546,9 @@ def foto_o_mapa(foto, left, top, w, h, opacidad=1.0):
     y0, y1 = max(top, 0), min(top + h, CH)
     vw, vh = x1 - x0, y1 - y0
     esc_m = min(vw / mw, vh / mh) * 0.8
-    return ("<div class='a' style='%s'><img src='%s' style='position:absolute;"
+    return ("<div class='a' style='%s'>%s<img src='%s' style='position:absolute;"
             "left:%.2fpx;top:%.2fpx;width:%.2fpx;opacity:0.55'></div>") % (
-        caja(left, top, w, h, "background:#000;overflow:hidden;"), uri(ASSETS / "mapa.png"),
+        caja(left, top, w, h, "background:#000;overflow:hidden;"), fondo, uri(ASSETS / "mapa.png"),
         (x0 - left) + (vw - mw * esc_m) / 2, (y0 - top) + (vh - mh * esc_m) / 2, mw * esc_m)
 
 
@@ -519,7 +629,11 @@ def html_indice(ed, fotos, notas, latam):
     for k, (top, (fl, ft, fw, fh, op)) in enumerate(FRANJAS):
         partes.append("<div class='a' style='%s'></div>" % caja(0, top, 1587.40, 561.26, "background:#000;"))
     for k, (top, (fl, ft, fw, fh, op)) in enumerate(FRANJAS):
-        f = fotos.get("n%d" % (k + 1))
+        # Cada franja con su foto; la que no tenga, con la prestada. Edicion
+        # lo pidio el 25/09/2026: con tres franjas en negro liso y una con foto,
+        # el indice parecia a medio hacer. Aqui no hace falta oscurecerla mas:
+        # la opacidad de la plantilla ya la deja de fondo.
+        f = fotos.get("n%d" % (k + 1)) or fotos.get("respaldo_n%d" % (k + 1))
         if f and k < len(notas):
             partes.append("<img class='a foto' src='%s' style='%s'>" % (
                 uri(f), caja(fl, ft, fw, fh, "opacity:%.2f;" % op)))
@@ -563,7 +677,8 @@ def html_noticia(ed, fotos, notas, latam, k):
     partes = [
         "<div class='a' style='%s'></div>" % caja(-97.42, -54.62, 1782.23, 615.07, "background:#000;"),
         lineas_dobles(),
-        foto_o_mapa(fotos.get("n%d" % (k + 1)), -112.18, 619.44, 809.57, 809.57),
+        foto_o_mapa(fotos.get("n%d" % (k + 1)), -112.18, 619.44, 809.57, 809.57,
+                    respaldo=fotos.get("respaldo_n%d" % (k + 1))),
         "<div class='a' style='%s'></div>" % caja(-28.36, 1488.02, 1870.08, 858.39, "background:#000;"),
         "<div class='a i just' data-fit='h:843' style='%s'>%s</div>" % (caja(
             747.89, 624.24, 727.61, None, "font-size:32.43px;line-height:1.4;color:#000;"), cuerpo),
@@ -705,13 +820,24 @@ def html_latam(ed, fotos, notas, latam):
     items = latam.get("items") or []
     lista = "".join("<li style='margin-bottom:%s'>%s</li>" % ("0" if i == len(items) - 1 else "1.19em", esc(x))
                     for i, x in enumerate(items))
-    partes = [
-        "<img class='a' src='%s' style='%s'>" % (uri(ASSETS / "mapa.png"), caja(mx, my, mw, mh)),
-    ]
-    # Sin foto, el mapa de la plantilla en su hueco (ver foto_o_mapa). Aqui pasa
-    # casi todas las semanas: los titulares de Latam llegan del feed de Google
-    # News, sin enlace directo al medio, y sin enlace directo no hay foto.
-    partes.append(foto_o_mapa(fotos.get("latam"), 970.22, 879.81, 809.57, 1206.49))
+    partes = []
+    # FOTO DE FONDO DETRAS DEL MAPA, pedida por Edicion el 25/09/2026 («sin
+    # quitar el mapa, solo una imagen de fondo»). Va como la de la portada, casi
+    # negra, para que el mapa y el titular rojo sigan mandando; y es OTRA foto
+    # que la del recuadro, para no ver la misma dos veces en la pagina.
+    recuadro = fotos.get("latam") or fotos.get("respaldo_latam")
+    otras = [fotos.get("n%d" % (k + 1)) for k in range(len(notas))][::-1] + [fotos.get("latam")]
+    fondo = next((p for p in otras if p and p != recuadro), None)
+    if fondo:
+        partes.append("<img class='a foto' src='%s' style='%s'>" % (
+            uri(fondo), caja(0, 0, CW, CH, "filter:brightness(0.2);")))
+    partes.append("<img class='a' src='%s' style='%s'>" % (uri(ASSETS / "mapa.png"), caja(mx, my, mw, mh)))
+    # Sin foto, el mapa de la plantilla en su hueco, con otra foto de la edicion
+    # detras (ver foto_o_mapa). Los titulares de Latam llegan casi siempre del
+    # feed de Google News; desde el 25/09/2026 se resuelven (resolver_google_news)
+    # pero hay medios que no dejan leer su pagina.
+    partes.append(foto_o_mapa(fotos.get("latam"), 970.22, 879.81, 809.57, 1206.49,
+                              respaldo=fotos.get("respaldo_latam")))
     partes += [
         "<div class='a i tt dcha' style='%s'>LATAM<br>ENLATADA</div>" % caja(
             566.86, 394.08, 934.35, None, "font-size:180.75px;line-height:0.8;color:#ec2736;"),
@@ -799,12 +925,15 @@ def main():
     (dest / "edicion.json").write_text(json.dumps(ed, ensure_ascii=False, indent=1), encoding="utf-8")
 
     notas, latam = edicion_normalizada(ed)
-    completar_fotos(notas, latam)
+    completar_fotos(notas, latam, ed.get("titulares") or [])
     print(f"{len(notas)} noticias · Latam con {len(latam.get('items') or [])} párrafos")
     fotos = {}
     for k, n in enumerate(notas):
         fotos["n%d" % (k + 1)] = bajar_foto(n.get("imagen"), dest, "foto-n%d" % (k + 1))
     fotos["latam"] = bajar_foto(latam.get("imagen"), dest, "foto-latam")
+    fotos_de_respaldo(notas, fotos)
+    for c in sorted(k for k in fotos if k.startswith("respaldo_")):
+        print(f"     {c[9:]}: sin foto propia; de fondo, oscurecida, {fotos[c].name}")
 
     for nombre, fn in laminas(notas):
         html_path = dest / f"{nombre}.html"
