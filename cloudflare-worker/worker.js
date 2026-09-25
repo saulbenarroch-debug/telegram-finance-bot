@@ -99,7 +99,13 @@ const WELCOME =
 // LUNES, no viernes, desde el 08/09/2026. El newsletter pasó a publicarse los
 // lunes y el prearmado seguía siendo del viernes: la edición llegaba con tres
 // días encima, que en economía es media vida. Misma hora, otro día.
-const ENTORNO_CRON = "0 12 * * 1"; // lunes 12:00 UTC = 8:00 a.m. VET
+// LUNES 10:00 UTC = 6:00 a.m. VET, DESDE EL 25/09/2026. Antes era a las 12:00 y
+// coincidia con la tanda de la manana (DIARIO_CRON): las dos tiran de la misma
+// cuota diaria de flash de las mismas dos cuentas de Gemini, que se renueva a
+// las 07:00 UTC, y la tanda la gastaba antes que el Entorno. A las 10:00 el
+// Entorno llega primero con la cuota recien renovada. No se envia a nadie:
+// solo queda armado para cuando lo pidan.
+const ENTORNO_CRON = "0 10 * * 1";
 // Las dos tandas del medio, de lunes a viernes:
 //   12:00 UTC = 8:00 a.m. VET   18:00 UTC = 2:00 p.m. VET
 // Van en UNA sola expresion y no en dos para no gastar dos disparadores de los
@@ -332,14 +338,14 @@ export default {
 
   // Crons (se configuran al desplegar):
   //  - "0 */3 * * *" ingiere noticias y tasas al historial.
-  //  - ENTORNO_CRON (lunes 8:00 a.m. VET) prearma el newsletter semanal y lo
+  //  - ENTORNO_CRON (lunes 6:00 a.m. VET) prearma el newsletter semanal y lo
   //    deja en KV. No se envía a nadie: queda listo para cuando lo pidan.
   //  - DIARIO_CRON (12:00 y 18:00 UTC, L-V) lanza la tanda del medio.
   //
-  // OJO AL ORDEN: los LUNES a las 12:00 coinciden ENTORNO_CRON y DIARIO_CRON,
-  // pero Cloudflare entrega un evento por cada expresion, con su event.cron, asi
-  // que no se pisan. Lo que no se puede es cambiar estos if por horas: el
-  // lunes se perderia una de las dos.
+  // OJO AL ORDEN: hasta el 25/09/2026 los LUNES a las 12:00 coincidian
+  // ENTORNO_CRON y DIARIO_CRON (ya no: el Entorno pasó a las 10:00). Aun asi,
+  // Cloudflare entrega un evento por cada expresion, con su event.cron, y esa
+  // es la forma de distinguirlos: no se cambian estos if por horas.
   async scheduled(event, env, ctx) {
     // QUE CRON DISPARO Y CUANDO, EN KV. Sin esto, "el cron no salta" y "el cron
     // salta pero cae en el else" son indistinguibles desde fuera, y el else

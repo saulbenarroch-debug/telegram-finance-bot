@@ -255,7 +255,9 @@ aquí están también los secretos `SURECONOMICS_USUARIO` y `SURECONOMICS_CLAVE`
    Cloudflare funciona, el de GitHub se descarta solo. Eso no es volver a poner
    `schedule` como reloj: es dejarlo de red.
 5. **No hay envío programado del newsletter**, por decisión del dueño del
-   proyecto. El cron del **lunes** solo prearma la edición en caché.
+   proyecto. El cron del **lunes** (10:00 UTC) solo prearma la edición en caché.
+   Lo que sí sale por correo es el boletín del sitio, y solo si alguien de la
+   redacción toca «Subir al boletín» (ver más arriba).
    Se movió de viernes a lunes el 08/09/2026, cuando el newsletter pasó a
    publicarse los lunes: prearmarlo el viernes lo dejaba con tres días
    encima, que en economía es media vida.
@@ -305,8 +307,10 @@ modelo y luego por cuenta** (`embudoGemini` en `worker.js`):
 
 Antes el Worker usaba solo la principal: cuando se agotaba su flash, el Entorno
 lo escribía flash-lite con el flash de la reserva intacto. **Las dos cuentas son
-las mismas que usa el motor**, así que la cuota diaria es compartida: las
-tandas de la mañana gastan flash antes que el Entorno del lunes.
+las mismas que usa el motor**, así que la cuota diaria es compartida. Por eso
+el Entorno se prearma los lunes a las **10:00 UTC** (6:00 VET) y no a las 12:00:
+a esa hora coincidía con la tanda de la mañana, que le gastaba el flash antes.
+La cuota se renueva a las 07:00 UTC.
 
 La cadena del bot de resúmenes (`bot.py`) sigue siendo:
 `gemini-3.5-flash-lite` → `gemini-3.5-flash` → `openai/gpt-oss-120b` (Groq).

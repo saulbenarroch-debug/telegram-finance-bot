@@ -25,7 +25,8 @@ KV_TITLE = "sureconomics-kv"
 # El plan gratuito de Cloudflare da 5 disparadores por cuenta; van 3.
 CRONS = [
     "0 */3 * * *",     # cada 3 horas: ingiere noticias, tasa BCV e IBC al historial
-    "0 12 * * 1",      # lunes 12:00 UTC = 8:00 a.m. VET: prearma "Entorno en Vinetas"
+    "0 10 * * 1",      # lunes 10:00 UTC = 6:00 a.m. VET: prearma "Entorno en Vinetas"
+                       # (antes de la tanda de las 12:00, que gasta el mismo flash)
     "0 12,18 * * 1-5",  # 8:00 a.m. y 2:00 p.m. VET: las dos tandas del medio
     # Vigilancia del medio cada MEDIA hora (desde el 24/09/2026, por los minutos
     # de Actions del repo privado; ver VIGILANCIA_CRON), 7:00 a 19:00 VET. Estaba en el
