@@ -46,6 +46,8 @@ TG = os.environ["TELEGRAM_TOKEN"].strip()
 GEM = os.environ.get("GEMINI_API_KEY", "").strip()
 # La segunda cuenta del embudo (ver embudoGemini en worker.js). Opcional.
 GEM_RESERVA = os.environ.get("GEMINI_API_KEY_RESERVA", "").strip()
+# La tercera, desde el 28/09/2026. Tambien opcional.
+GEM_RESERVA_2 = os.environ.get("GEMINI_API_KEY_RESERVA_2", "").strip()
 GROQ = os.environ.get("GROQ_API_KEY", "").strip()
 TAVILY = os.environ.get("TAVILY_API_KEY", "").strip()
 # PAT de GitHub (Actions: read/write) para que el bot dispare el render de las
@@ -101,6 +103,7 @@ def main():
             {"type": "secret_text", "name": "TELEGRAM_TOKEN", "text": TG},
             {"type": "secret_text", "name": "GEMINI_API_KEY", "text": GEM},
             {"type": "secret_text", "name": "GEMINI_API_KEY_RESERVA", "text": GEM_RESERVA},
+            {"type": "secret_text", "name": "GEMINI_API_KEY_RESERVA_2", "text": GEM_RESERVA_2},
             {"type": "secret_text", "name": "GROQ_API_KEY", "text": GROQ},
             {"type": "secret_text", "name": "TAVILY_API_KEY", "text": TAVILY},
             {"type": "secret_text", "name": "GITHUB_PAT", "text": GH_PAT},

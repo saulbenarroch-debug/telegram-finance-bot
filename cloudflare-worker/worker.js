@@ -1,5 +1,5 @@
 // Sureconomics — bot conversacional con memoria (Cloudflare Worker + KV)
-// Bindings necesarios: TELEGRAM_TOKEN, GEMINI_API_KEY (y GEMINI_API_KEY_RESERVA,
+// Bindings necesarios: TELEGRAM_TOKEN, GEMINI_API_KEY (y GEMINI_API_KEY_RESERVA / _RESERVA_2,
 // opcional: la segunda cuenta del embudo), GROQ_API_KEY,
 //                      WEBHOOK_SECRET, y KV (namespace de Cloudflare KV).
 
@@ -810,7 +810,8 @@ async function aiAnswer(env, question, live, stored, history) {
 // LAS CUENTAS DE GEMINI, EN ORDEN. La reserva es opcional: si el binding no
 // existe, llega vacío y se descarta, y todo sigue con una sola.
 function clavesGemini(env) {
-  return [["principal", env.GEMINI_API_KEY], ["reserva", env.GEMINI_API_KEY_RESERVA]]
+  return [["principal", env.GEMINI_API_KEY], ["reserva", env.GEMINI_API_KEY_RESERVA],
+          ["reserva-2", env.GEMINI_API_KEY_RESERVA_2]]
     .filter((c) => c[1] && String(c[1]).trim());
 }
 
