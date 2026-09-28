@@ -105,12 +105,20 @@ const WELCOME =
 // las 07:00 UTC, y la tanda la gastaba antes que el Entorno. A las 10:00 el
 // Entorno llega primero con la cuota recien renovada. No se envia a nadie:
 // solo queda armado para cuando lo pidan.
-const ENTORNO_CRON = "0 10 * * 1";
+// OJO CON LOS DIAS: EN CLOUDFLARE EL 1 ES EL DOMINGO, no el lunes como en el
+// cron de GitHub o de Linux (documentado: «1 = Sunday to 7 = Saturday»). Hasta
+// el 28/09/2026 aqui ponia "1" y "1-5" creyendo que era lunes y lunes-viernes:
+// el Entorno se prearmaba el DOMINGO, las tandas y la vigilancia corrian de
+// domingo a jueves, y el viernes no salia nada por el Worker (las tandas de los
+// viernes las salvaba el schedule de GitHub, con horas de retraso). Se vio
+// porque el 27/09, domingo, hubo dos tandas y una edicion del Entorno. Lunes = 2,
+// lunes a viernes = 2-6.
+const ENTORNO_CRON = "0 10 * * 2";
 // Las dos tandas del medio, de lunes a viernes:
 //   12:00 UTC = 8:00 a.m. VET   18:00 UTC = 2:00 p.m. VET
 // Van en UNA sola expresion y no en dos para no gastar dos disparadores de los
 // cinco que da el plan gratuito de Cloudflare.
-const DIARIO_CRON = "0 12,18 * * 1-5";
+const DIARIO_CRON = "0 12,18 * * 2-6";
 
 // LA VIGILANCIA, CADA CUARTO DE HORA Y EN HORARIO DE REDACCION.
 //
@@ -151,7 +159,7 @@ const DIARIO_CRON = "0 12,18 * * 1-5";
 // de septiembre llego al 90 % el dia 24. Cada media hora son ~800. Decision del
 // dueno "por ahora": si se paga el exceso ($0,006 el minuto), se puede volver
 // a cada cuarto de hora sabiendo que son unos $6 al mes.
-const VIGILANCIA_CRON = "0,15,30,45 11,12,13,14,15,16,17,18,19,20,21,22,23 * * 1-5";
+const VIGILANCIA_CRON = "0,15,30,45 11,12,13,14,15,16,17,18,19,20,21,22,23 * * 2-6";
 // Repo donde vive el workflow que dibuja las laminas (Chrome headless no corre
 // en un Worker, asi que el render se delega a GitHub Actions).
 const GITHUB_REPO = "saulbenarroch-debug/telegram-finance-bot";

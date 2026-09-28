@@ -266,6 +266,15 @@ aquí están también los secretos `SURECONOMICS_USUARIO` y `SURECONOMICS_CLAVE`
      ya tenía el `GITHUB_PAT`, ya sabía hablar con la API de Actions y ya corría
      crons: cero cuentas nuevas y cero credenciales que mantener.
 
+   **EN CLOUDFLARE EL 1 ES EL DOMINGO** (1 = domingo … 7 = sábado), no el lunes
+   como en GitHub o Linux. Hasta el 28/09/2026 los crons del Worker decían `1`
+   y `1-5` creyendo que eran lunes y lunes-viernes: el Entorno se prearmaba el
+   domingo, las tandas y la vigilancia corrían de domingo a jueves y el viernes
+   el Worker no disparaba nada (salvaba las tandas el `schedule` de GitHub, con
+   horas de retraso). Lunes = `2`, lunes a viernes = `2-6`. **El `schedule:` de
+   los `.yml` sí va con la numeración de GitHub (`1-5` = lunes-viernes)**: no
+   copiar expresiones de un sitio a otro sin traducirlas.
+
    `diario.yml` **sí conserva su `schedule:`, y a propósito**: su job `guardia`
    corre siempre ante un disparo pedido y salta el del reloj si esa tanda ya
    salió. Si Cloudflare falla, el de GitHub llega tarde pero llega; si

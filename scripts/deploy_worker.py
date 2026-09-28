@@ -24,17 +24,19 @@ KV_TITLE = "sureconomics-kv"
 # y el Worker cae en el 'else', que ingiere noticias en vez de lanzar la tanda.
 # El plan gratuito de Cloudflare da 5 disparadores por cuenta; van 3.
 CRONS = [
+    # EN CLOUDFLARE EL 1 ES EL DOMINGO: lunes = 2, lunes a viernes = 2-6. Ver
+    # ENTORNO_CRON en worker.js; hasta el 28/09/2026 todo iba un dia adelantado.
     "0 */3 * * *",     # cada 3 horas: ingiere noticias, tasa BCV e IBC al historial
-    "0 10 * * 1",      # lunes 10:00 UTC = 6:00 a.m. VET: prearma "Entorno en Vinetas"
+    "0 10 * * 2",      # lunes 10:00 UTC = 6:00 a.m. VET: prearma "Entorno en Vinetas"
                        # (antes de la tanda de las 12:00, que gasta el mismo flash)
-    "0 12,18 * * 1-5",  # 8:00 a.m. y 2:00 p.m. VET: las dos tandas del medio
+    "0 12,18 * * 2-6",  # 8:00 a.m. y 2:00 p.m. VET: las dos tandas del medio
     # Vigilancia del medio cada CUARTO de hora, 7:00 a 19:00 VET. Estuvo cada
     # media hora del 24 al 28/09/2026 por los minutos de Actions cuando el repo
     # del medio era privado; ver VIGILANCIA_CRON. Estaba en el
     # schedule: de GitHub y llegaba de 20 min a 2 h tarde; dos rondas del
     # 16-18/09/2026 aparecieron pasada la medianoche, cuando ya no hay nadie
     # leyendo. No cuesta cuota de IA: vigilar.py no llama a Gemini ni a Tavily.
-    "0,15,30,45 11,12,13,14,15,16,17,18,19,20,21,22,23 * * 1-5",
+    "0,15,30,45 11,12,13,14,15,16,17,18,19,20,21,22,23 * * 2-6",
 ]
 
 load_dotenv(ENV_PATH)
