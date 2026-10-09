@@ -111,31 +111,70 @@ Tres piezas hacen eso, y el ORDEN entre ellas importa:
 
 ## La plantilla del Entorno en Viñetas
 
-`entorno/render.py` es un clon en código del Canva **«entorno en viñetas»**
-(`DAHOniEgyiw`), y desde el 24/09/2026 de su versión de **ocho páginas**:
-portada, índice, cuatro noticias, economía en cifras y Latam enlatada. El
-encargo del dueño fue literal: *«no quites nada, tu trabajo es añadir las fotos
-y la información, no cambiar la plantilla»*. Así que **nada de ese archivo se
-estima a ojo**:
+`entorno/render.py` es un clon en código del Canva **«Entorno en viñetas
+(propuesta paleta 2)»** (`DAHWrdKhQZs`), la plantilla verde de octubre de 2026,
+y el contenido lo dicta la **«guía maestra de contenido»** del equipo de
+comunicación (7/10/2026, `Downloads\Entorno en Viñetas guía maestra de
+contenido.pdf`). El encargo sigue siendo literal: *«no quites nada, tu trabajo
+es añadir las fotos y la información, no cambiar la plantilla»*. Así que **nada
+de ese archivo se estima a ojo**:
 
-- **La geometría sale de la API de Canva**, en las unidades de su lienzo
-  (1587,4 × 2245). Cada página se maqueta en esas unidades y se escala a
-  1414 px al final, para copiar los números tal cual.
-- **Las tipografías salen del PDF exportado**, que incrusta el nombre real de
-  cada fuente: Inter, Host Grotesk Light, Montserrat, IBM Plex Mono y Nourd
-  Heavy. Nourd no es libre y se sustituye por Archivo Black (solo en las dos
-  tasas). Las demás están en `assets/fonts/` con su `OFL.txt`.
-- **Se comparó renglón a renglón** con la exportación: todos los textos caen a
-  0-2 px de la plantilla.
+- **La geometría sale de la API de Canva** (leída con una transacción que se
+  cancela sin guardar), en las unidades de su lienzo (1587,4 × 2245), y se
+  escala a 1414 px al final.
+- **Las tipografías son las mismas de septiembre** (mismas referencias de
+  fuente en Canva): Inter, Host Grotesk Light, Montserrat, IBM Plex Mono y
+  Archivo Black en lugar de Nourd. Están en `assets/fonts/` con su `OFL.txt`.
+- **Lo que la API no dice se midió sobre la exportación** (`assets/referencia/v3-*`):
+  el fondo de portada es la foto **al 16 % sobre el verde #003318** (ajuste
+  lineal por canal, error 1/255); la pila de papeles es la misma `pila.png`,
+  ahora en (388, 814) px; el logo SurE va sobre su silueta en (984, 142) px,
+  288×84. El logo es el del sitio (`sureconomics.com/brand/v2/sure-negativo.png`,
+  público, en el repo): el de Canva solo se baja a 200 px.
+
+**Ocho páginas, en el orden de la guía:** portada, cuatro viñetas, perspectivas
+(«¿Qué estamos esperando?» arriba y «¿Qué podría pasar?» abajo), Economía en
+cifras y Latam enlatada. **Ya no hay índice.** Correcciones de la guía sobre la
+plantilla que se aplican en código: «¿Qué estamos esperando?» sin la tilde de
+«estámos» y numerado 01, 02, 03 (la plantilla salta 01, 03, 05); el número de
+las viñetas, blanco en las cuatro (el (02) era verde sobre verde); Latam
+enlatada sin número (decisión de Saúl, el (04) chocaba con la viñeta 04).
 
 **La plantilla la sigue editando Edición, y hay que volver a leerla cuando
-cambia.** El mismo 24/09/2026 quitó de las páginas de noticia el segundo bloque
-(el subtítulo repetido abajo con su párrafo) y dejó en la franja negra **tres
-viñetas «▪»**. El modelo ahora escribe la lectura en tres puntos (`LECTURA`
-llega como lista) y `render.py` sigue aceptando ediciones viejas, con la lectura
-en un solo texto más el `texto2`, que salen como dos viñetas. Para ver qué
-cambió: leer el diseño por la API (geometría), exportar la página a
+cambia.** Para ver qué cambió: leer el diseño por la API, exportar a
 `assets/referencia/` y comparar.
+
+### Lo que la guía pide y cómo se cumple
+
+| Regla de la guía | Dónde |
+|---|---|
+| Sale el lunes y cubre la semana anterior, de lunes a domingo | `semanaEntorno()` (Worker) y `semana_cubierta()` (render) |
+| Edición N.º correlativa | `numero_de_edicion()`: números del boletín **enviados** antes de ese lunes, más uno (decisión de Saúl). Sin panel, ancla N.º 3 = 12/10/2026 |
+| Una sola fecha de corte: el cierre del viernes | `gatherEntornoData(env, corte)`: mercados, tasas e IBC a esa fecha |
+| ▲ y ▼ en cifras de mercado; fechas escritas | `flecha()`, `fecha_sin_anio()` en render |
+| Cero guiones | el prompt lo prohíbe; `sinGuiones()` arregla incisos y «A–B»; el chequeo señala lo que queda |
+| Tres lentes por viñeta (Económico, Político, Crecimiento) | campos `ECONOMICO`, `POLITICO`, `CRECIMIENTO` del prompt; `analisis()` en render |
+| Toda viñeta con fuente | **una viñeta sin titular de origen se descarta** (el 09/10/2026 el modelo armó tres con la tabla de cifras) |
+| Dolarización informal con estudio citado | **oculta** hasta que el equipo pase un estudio (decisión de Saúl) |
+| Merey 16 | **pendiente**: no hay fuente gratuita diaria conocida; la línea sale sola si `mercados.merey` existe |
+
+**La agenda («¿Qué estamos esperando?») no la fecha el modelo.** Saúl pidió que
+el bot busque los eventos; las fechas se comprueban por código:
+- `agendaFed()` lee el calendario de reuniones de la Reserva Federal;
+- `agendaBea()` lee el calendario de la BEA (PIB, ingreso y gasto, comercio);
+- de la prensa (`ENTORNO_Q_AGENDA`) solo pasa un evento si el titular o su
+  resumen dicen esa fecha (`verificarEvento`).
+Si no hay tres, salen los que haya y el chequeo lo dice. La inflación y el
+empleo de EE. UU. (BLS) no se pueden leer: la página da 403. FRED los da con
+una clave gratuita que aún no existe.
+
+### El chequeo antes de subir
+
+`render.chequeo()` pasa los 10 puntos del checklist de la guía más los largos de
+cada campo, y el resultado va **en el mismo mensaje del botón «Subir al
+boletín»** (`send_telegram.texto_chequeo`). No bloquea: avisa a quien aprueba.
+Lo que el código no puede comprobar (que una cifra sea la más reciente) sale
+como «👀 revisar».
 
 ### Tres diferencias entre CSS y Canva que ya costaron una tarde
 
@@ -152,44 +191,33 @@ cambió: leer el diseño por la API (geometría), exportar la página a
    atributo y las dos tasas desaparecieron de la lámina sin ningún error. Los
    nombres de familia van sin comillas en los estilos en línea.
 
-### Las fotos: cinco donde antes había una, y solo si son de su noticia
+### Las fotos: ocho, todas distintas y con crédito
 
-- Salen del `og:image` del artículo fuente de cada noticia y de Latam. **Un
-  enlace de Google News no tiene foto**: es un redirector que solo salta con
-  JavaScript. El Worker busca la misma noticia en el historial del KV
-  (`enlaceDirecto()`), y lo que no consigue lo reintenta `render.py`
-  (`completar_fotos`) con tres escalones:
-  1. **resolver el enlace de Google** al artículo (`resolver_google_news`, vía
-     el endpoint interno `batchexecute`: NO es una API y puede cambiar; si
-     falla devuelve "" y se pasa al siguiente escalón) y pedir su `og:image`
-     desde GitHub;
-  2. la foto **del mismo hecho en otro medio** de `titulares` (tres palabras con
-     peso en común), porque hay medios que no dejan leer a nadie (France 24 da
-     403 o una página de desafío, también con cabeceras de navegador completas);
-  3. una foto **prestada** de otra noticia de la edición (`fotos_de_respaldo`).
-  Medido el 25/09/2026: se pasó de 1 de 5 fotos a 4 de 5; solo France 24 cayó
-  al escalón 3.
-- **TODA NOTICIA LLEVA IMAGEN DE FONDO desde el 25/09/2026**, por pedido de
-  Edición («sin quitar el mapa, solo una imagen de fondo»). Antes, sin foto,
-  el hueco quedaba en negro con el mapa. Ahora la foto prestada va **detrás del
-  mapa, oscurecida** (brillo 0,38): es fondo y no se lee como la foto de esa
-  noticia, que era lo que había que evitar (una foto ajena encima de una noticia
-  ya dio, en el medio, un derrame petrolero ilustrando un acuerdo energético).
-  En el índice, cada franja sin foto propia lleva la prestada con la opacidad de
-  la plantilla. Se prefiere la de Latam (no sale en el índice) y luego la de la
-  noticia más lejana, para que dos franjas vecinas no repitan.
-- **La página Latam lleva también foto de fondo detrás del mapa**, casi negra
-  (brillo 0,2) como la portada, y distinta de la del recuadro.
-- **Cuántas páginas salen con foto propia depende también de Tavily.** Sus
-  búsquedas son las que traen enlaces directos de medios venezolanos.
+La guía maestra pide foto real en cada hueco, relacionada con su texto, con
+crédito y **sin repetir ninguna en la edición**. `render.repartir_fotos()`:
+
+| Hueco | De dónde sale |
+|---|---|
+| Viñetas 01 a 04 | `og:image` del artículo fuente (el Worker, y si no, render.py resolviendo antes el enlace de Google News con `resolver_google_news`) |
+| Polaroid de portada («qué o quién») | Wikidata: imagen del `PROTAGONISTA` de la noticia 01 |
+| Fondo de portada («dónde») | Wikidata: imagen del `LUGAR` de la noticia 01 |
+| «¿Qué podría pasar?» | Wikidata: imagen del `SECUNDARIO` de la noticia 01 |
+| Latam enlatada | `og:image` del primer punto; si no, Wikidata del país |
+
+**La polaroid NO es la foto de la viñeta 01**: la primera prueba (09/10/2026) las
+repitió. El modelo solo nombra la entidad; la imagen y su licencia salen de
+Wikidata y Commons (`foto_wikidata`). Crédito: «Foto: <medio>» para las de
+artículo, autor y licencia para las de Commons. **La «foto prestada» de
+septiembre desapareció**: la guía prohíbe una foto sin relación con el texto. Un
+hueco sin foto queda con el mapa sobre verde y lo denuncia el chequeo.
 
 ### Lo que la plantilla trae de relleno y NO se publica como dato
 
-- **«Extensión de dolarización informal: 76 %»** es texto de ejemplo: el
-  sistema no tiene esa cifra y sale **s/d** hasta que se decida su fuente.
-  `render.py` ya lee `datos.dolarizacion.valor` si algún día existe.
-- Los «8» de las tasas, el «90 %», las fechas y la línea de «Fuente: Condor
-  Ferries» se sustituyen por los datos y las fuentes reales.
+- «Extensión de dolarización informal: 76 %» no se publica: la línea está oculta
+  hasta que haya un estudio con nombre y fecha.
+- Los «8» de las tasas, el «90 %», las fechas abreviadas, los «(−0,09%)» y la
+  línea de «Fuente: Condor Ferries» se sustituyen por los datos, las ▲▼ y las
+  fuentes reales con la fecha de corte.
 
 ### Recursos que no pueden estar en este repo (que es público)
 

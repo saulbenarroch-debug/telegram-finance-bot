@@ -56,6 +56,9 @@ jobs:
       - name: Generar laminas
         env:
           WEBHOOK_SECRET: ${{ secrets.WEBHOOK_SECRET }}
+          # Para contar los numeros del boletin ya enviados (numero de edicion).
+          SURECONOMICS_USUARIO: ${{ secrets.SURECONOMICS_USUARIO }}
+          SURECONOMICS_CLAVE: ${{ secrets.SURECONOMICS_CLAVE }}
           CHROME_BIN: google-chrome
           FORZAR: ${{ inputs.forzar }}
         run: python entorno/render.py $([ "$FORZAR" = "1" ] && echo --forzar)

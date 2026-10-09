@@ -203,7 +203,9 @@ def main():
     if not (numero.get("preheader") or "").strip():
         # El texto que el correo enseña al lado del asunto. Sale de la
         # contraportada de la edicion, que es justo el gancho de la semana.
-        gancho = ((ed.get("secciones") or {}).get("CONTRAPORTADA") or "").strip()
+        # Desde octubre de 2026 es el titular de la semana (la plantilla nueva ya
+        # no tiene contraportada); una edicion vieja sigue trayendo la suya.
+        gancho = (ed.get("titular") or (ed.get("secciones") or {}).get("CONTRAPORTADA") or "").strip()
         if gancho:
             cambios["preheader"] = gancho[:150].rsplit(" ", 1)[0] + ("…" if len(gancho) > 150 else "")
     if not prueba:

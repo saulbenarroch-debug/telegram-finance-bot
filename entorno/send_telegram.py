@@ -8,6 +8,7 @@ Uso: py send_telegram.py [AAAA-MM-DD] [--con-texto]
 render.py). Se usa cuando la edicion se armo en frio desde Actions: el chat no
 la tenia en cache, asi que no mando nada, y el texto tiene que salir de aqui.
 """
+import html
 import json
 import os
 import sys
@@ -95,7 +96,23 @@ def enviar_texto(token, chat, partes):
             print("ERR texto chat", chat, e.code, e.read()[:200])
 
 
-def ofrecer_boletin(token, chat):
+def texto_chequeo(chequeo):
+    """El checklist de la guia maestra (render.chequeo) en pocas lineas: lo que
+    paso, lo que hay que mirar y lo que solo puede confirmar una persona."""
+    if not chequeo:
+        return ""
+    marca = {"ok": "✅", "aviso": "⚠️", "revisar": "👀"}
+    lineas = []
+    for estado, nombre, detalle in chequeo:
+        lineas.append("%s %s%s" % (marca.get(estado, "•"), html.escape(nombre),
+                                   (": <i>" + html.escape(detalle) + "</i>") if detalle and estado != "ok" else ""))
+    malos = sum(1 for e, _, _ in chequeo if e == "aviso")
+    cab = ("<b>Chequeo de la guía: todo en orden.</b>" if not malos else
+           "<b>Chequeo de la guía: %d punto%s por revisar antes de subir.</b>" % (malos, "" if malos == 1 else "s"))
+    return cab + "\n" + "\n".join(lineas) + "\n\n"
+
+
+def ofrecer_boletin(token, chat, chequeo=None):
     """El boton "Subir al boletin", en un mensaje aparte debajo del album.
 
     Aparte porque Telegram no deja poner botones en un album de fotos. Y SOLO EN
@@ -114,7 +131,11 @@ def ofrecer_boletin(token, chat):
         return
     cuerpo = json.dumps({
         "chat_id": chat,
-        "text": "¿Lo subo al boletín del sitio? Queda activo y el lunes a las 9:00 sale "
+        "parse_mode": "HTML",
+        # El chequeo va EN ESTE MENSAJE y no aparte: es justo lo que tiene que
+        # leer quien esta por tocar el boton.
+        "text": texto_chequeo(chequeo) +
+                "¿Lo subo al boletín del sitio? Queda activo y el lunes a las 9:00 sale "
                 "solo por correo a toda la lista. Hasta entonces se puede volver a "
                 "borrador desde el panel.",
         "reply_markup": {"inline_keyboard": [[
@@ -148,17 +169,20 @@ def main():
     if not laminas:
         raise SystemExit(f"no hay laminas en {dest}; corre primero render.py")
 
-    pie = f"📰 Entorno en Viñetas — resumen semanal ({fecha})"
+    pie = f"📰 Entorno en Viñetas · resumen semanal ({fecha})"
+    edicion = {}
+    if (dest / "edicion.json").exists():
+        edicion = json.loads((dest / "edicion.json").read_text(encoding="utf-8"))
     fallos = 0
     for chat in [c.strip() for c in env["CHAT_ID"].split(",") if c.strip()]:
         if con_texto and (dest / "edicion.json").exists():
-            partes = json.loads((dest / "edicion.json").read_text(encoding="utf-8")).get("parts") or []
+            partes = edicion.get("parts") or []
             enviar_texto(env["TELEGRAM_TOKEN"], chat, partes)
             print("OK  chat", chat, "->", len(partes), "mensajes de texto")
         try:
             r = enviar(env["TELEGRAM_TOKEN"], chat, laminas, pie)
             print("OK  chat", chat, "->", len(r.get("result", [])), "fotos")
-            ofrecer_boletin(env["TELEGRAM_TOKEN"], chat)
+            ofrecer_boletin(env["TELEGRAM_TOKEN"], chat, edicion.get("chequeo"))
         except urllib.error.HTTPError as e:
             fallos += 1
             print("ERR chat", chat, e.code, e.read()[:300])

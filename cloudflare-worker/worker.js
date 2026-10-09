@@ -310,6 +310,10 @@ export default {
                 noticias: ed.noticias || [],
                 escrita_por: ed.escrita_por || "",
                 latam: ed.latam || null,
+                semana: ed.semana || null,
+                titular: ed.titular || "",
+                eventos: ed.eventos || [],
+                escenario: ed.escenario || "",
                 portada: ed.portada || null,
                 titulares: ed.titulares || [],
                 // El texto ya maquetado para Telegram. Lo usa send_telegram.py
@@ -927,6 +931,45 @@ function fechaLarga(iso) {
   return Number(p[2]) + " de " + (MESES_LARGOS[Number(p[1]) - 1] || p[1]) + " de " + p[0];
 }
 
+// LAS FECHAS DE UNA EDICIÓN, igual que en entorno/render.py (lunes_objetivo y
+// semana_cubierta): sale el lunes y cubre la semana ANTERIOR, de lunes a
+// domingo (guía maestra de octubre de 2026; decisión de Saúl el 08/10/2026).
+// Los datos de mercado tienen UNA sola fecha de corte: el cierre del viernes
+// anterior al envío. Un pedido a mitad de semana arma la edición del lunes que
+// viene, con la semana en curso.
+function sumarDias(iso, n) {
+  return new Date(Date.parse(iso.slice(0, 10) + "T12:00:00Z") + n * 86400000).toISOString().slice(0, 10);
+}
+function semanaEntorno(hoyIso) {
+  const dia = new Date(hoyIso.slice(0, 10) + "T12:00:00Z").getUTCDay(); // 0 domingo
+  const lunes = sumarDias(hoyIso, (8 - dia) % 7);
+  return { lunes: lunes, desde: sumarDias(lunes, -7), hasta: sumarDias(lunes, -1), corte: sumarDias(lunes, -3) };
+}
+// «del 5 al 11 de octubre de 2026», sin guiones.
+function rangoSemana(s) {
+  const [a0, m0, d0] = s.desde.split("-").map(Number);
+  const [a1, m1, d1] = s.hasta.split("-").map(Number);
+  const M = (m) => MESES_LARGOS[m - 1];
+  if (a0 !== a1) return "del " + d0 + " de " + M(m0) + " de " + a0 + " al " + d1 + " de " + M(m1) + " de " + a1;
+  if (m0 !== m1) return "del " + d0 + " de " + M(m0) + " al " + d1 + " de " + M(m1) + " de " + a1;
+  return "del " + d0 + " al " + d1 + " de " + M(m1) + " de " + a1;
+}
+
+// SIN GUIONES (guía maestra, regla 1): ni guion, ni raya, ni flechas. Lo que se
+// puede arreglar sin cambiar el sentido se arregla aquí: el inciso entre rayas
+// pasa a comas y «La Guaira–Caracas» a «La Guaira y Caracas». Lo que no (un
+// nombre como «T-MEC», un rango de cifras) lo señala el chequeo de render.py
+// antes de enviar, para que lo corrija una persona.
+function sinGuiones(s) {
+  return String(s || "")
+    .replace(/[ \t]*[→←↔⟶][ \t]*/g, " ")
+    .replace(/[ \t]+[-–—][ \t]+/g, ", ")
+    .replace(/([A-Za-zÁÉÍÓÚáéíóúÑñ])[–—]([A-Za-zÁÉÍÓÚáéíóúÑñ])/g, "$1 y $2")
+    .replace(/,\s*,/g, ",")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
+}
+
 function num(n, dec = 2) {
   if (n === null || n === undefined || !isFinite(n)) return "s/d";
   const s = Math.abs(n).toFixed(dec).split(".");
@@ -1043,8 +1086,11 @@ async function yahooSerie(ticker) {
   return [];
 }
 
-// Último cierre + variación semanal + variación en el año.
-function resumenSerie(serie) {
+// Último cierre + variación semanal + variación en el año. Con 'corte', el
+// último cierre es el de esa fecha o antes (guía maestra: una sola fecha de
+// corte por edición, el cierre del viernes; variación viernes contra viernes).
+function resumenSerie(serie, corte) {
+  if (corte && serie) serie = serie.filter((p) => p.d <= corte);
   if (!serie || !serie.length) return null;
   const ult = serie[serie.length - 1];
   const limite = new Date(Date.parse(ult.d) - 7 * 86400000).toISOString().slice(0, 10);
@@ -1078,7 +1124,7 @@ function varDesdeHist(hist, valor, fecha, dias) {
 }
 
 // --- Recolección completa de cifras ---
-async function gatherEntornoData(env) {
+async function gatherEntornoData(env, corte) {
   const tareas = [
     fetchTasas(),
     fetchIbc(),
@@ -1094,7 +1140,7 @@ async function gatherEntornoData(env) {
 
   const mercados = {};
   YF_TICKERS.forEach((x, i) => {
-    const r = resumenSerie(series[i]);
+    const r = resumenSerie(series[i], corte);
     if (r) mercados[x.k] = Object.assign({ nombre: x.n, dec: x.dec }, r);
   });
   // Si Yahoo no respondió (pasa si bloquea la IP del Worker), usamos el último
@@ -1110,6 +1156,23 @@ async function gatherEntornoData(env) {
     await kvPut(env, "mkt:last", { ts: Date.now(), mercados: mercados });
   }
 
+  // TASAS E IBC AL CORTE: el valor del histórico propio con fecha igual o
+  // anterior al viernes de corte. Sin corte (el comando de cifras sueltas), o
+  // si el histórico no llega tan atrás, el último que haya.
+  const alCorte = (hist, actual, fechaAct) => {
+    if (!corte) return { v: actual, d: fechaAct };
+    let ref = "";
+    for (const k of Object.keys(hist || {}).sort()) if (k <= corte) ref = k;
+    return ref ? { v: hist[ref], d: ref } : { v: actual, d: fechaAct };
+  };
+  const bcvC = alCorte(histBcv, tasas.bcv, tasas.fechaBcv);
+  const parC = alCorte(histPar, tasas.paralelo, tasas.fechaPar || hoyVET());
+  tasas.bcv = bcvC.v; tasas.fechaBcv = bcvC.d;
+  tasas.paralelo = parC.v; tasas.fechaPar = parC.d;
+  if (corte && ibc.valor) {
+    const ibcC = alCorte(histIbc, ibc.valor, ibc.fecha || hoyVET());
+    ibc.valor = ibcC.v; ibc.fecha = ibcC.d;
+  }
   const bcvSem = varDesdeHist(histBcv, tasas.bcv, tasas.fechaBcv, 6);
   const parSem = varDesdeHist(histPar, tasas.paralelo, tasas.fechaPar || hoyVET(), 6);
   const brecha =
@@ -1125,6 +1188,10 @@ async function gatherEntornoData(env) {
   return {
     generado: new Date().toISOString(),
     hoy: hoyVET(),
+    corte: corte || "",
+    // La línea de fuentes de Economía en cifras (guía: todas las fuentes de la
+    // página y la fecha de corte).
+    fuentes_cifras: "BCV, ve.dolarapi.com (paralelo), Yahoo Finance (índices, commodities y criptoactivos), Bolsa de Valores de Caracas",
     cambiario: {
       bcv: tasas.bcv,
       fechaBcv: tasas.fechaBcv,
@@ -1416,17 +1483,147 @@ function etiquetar(lista, g) {
   return lista.map((n) => Object.assign({}, n, { g: g }));
 }
 
-function promptEntorno(d, noticias) {
-  // A las mejores puntuadas se les pasa el resumen del feed: con eso el modelo
-  // redacta con detalle real en vez de rellenar con generalidades.
+
+// --- «¿Qué estamos esperando?»: la agenda de la semana que empieza ---
+//
+// LAS FECHAS NO LAS PONE EL MODELO. La guía maestra pide 3 eventos «siempre con
+// fecha confirmada», y Saúl decidió el 08/10/2026 que el bot los busque en la
+// web y en la lista blanca en vez de mantener una lista a mano. Así que hay dos
+// orígenes, y los dos dejan la fecha comprobable:
+//   1. la Reserva Federal publica su calendario de reuniones con un año de
+//      antelación: se lee de su web (agendaFed) y la fecha es la del calendario;
+//   2. eventos anunciados en la prensa («el BCV publicará…», «vence la licencia…»):
+//      el modelo propone, y verificarEvento() exige que el titular o su resumen
+//      digan esa fecha (el día y el mes, o el día de la semana). Si no, se cae.
+const ENTORNO_Q_AGENDA =
+  "(Venezuela OR BCV OR Pdvsa OR OPEP OR OFAC OR \"Reserva Federal\" OR Fed) " +
+  "(publicará OR \"se reunirá\" OR reunión OR vence OR vencimiento OR \"próxima semana\" OR " +
+  "subasta OR elecciones OR anunciará OR licencia)";
+// MÁS VENEZUELA. El 09/10/2026 la primera edición con la guía nueva le llegó al
+// modelo con UN solo titular de Venezuela (Tavily sin crédito y una sola
+// consulta a Google News), y rellenó tres viñetas con la tabla de cifras. Tres
+// consultas más, una por frente, y todas acotadas a la semana (when:9d).
+const ENTORNO_Q_VZ_EXTRA = [
+  "Venezuela (Pdvsa OR petróleo OR crudo OR Chevron OR licencia OR OFAC OR refinería) when:9d",
+  "(BCV OR \"Banco Central de Venezuela\" OR bolívar OR inflación OR Sudeban) Venezuela when:9d",
+  "Venezuela (empresas OR inversión OR deuda OR bonos OR FMI OR \"Banco Mundial\" OR reestructuración OR Fedecámaras) when:9d",
+];
+const MESES_EN = ["january", "february", "march", "april", "may", "june", "july", "august",
+  "september", "october", "november", "december"];
+const DIAS_SEMANA = ["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"];
+
+async function agendaFed(sem) {
+  const fin = sumarDias(sem.lunes, 6);
+  try {
+    const r = await fetch("https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm", { headers: UA });
+    if (!r.ok) return [];
+    const html = await r.text();
+    const anio = sem.lunes.slice(0, 4);
+    const i = html.indexOf(anio + " FOMC Meetings");
+    if (i < 0) return [];
+    const j = html.indexOf("FOMC Meetings", i + 20);
+    const seg = html.slice(i, j > 0 ? j : undefined);
+    const re = /fomc-meeting__month[^>]*>\s*<strong>([^<]+)<\/strong>[\s\S]*?fomc-meeting__date[^>]*>\s*([^<]+)</g;
+    const out = [];
+    let m;
+    while ((m = re.exec(seg)) !== null) {
+      // «April/May» y «30-1» cruzan de mes: la decisión es el último día.
+      const meses = m[1].toLowerCase().split("/");
+      const dias = (m[2].match(/\d+/g) || []).map(Number);
+      if (!dias.length) continue;
+      const mes = MESES_EN.indexOf(meses[meses.length - 1].trim()) + 1;
+      if (mes < 1) continue;
+      const fecha = anio + "-" + String(mes).padStart(2, "0") + "-" + String(dias[dias.length - 1]).padStart(2, "0");
+      if (fecha >= sem.lunes && fecha <= fin) {
+        out.push({ origen: "FED", fecha: fecha, fuente: "Reserva Federal",
+                   url: "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
+                   texto: "Reunión de política monetaria de la Reserva Federal (FOMC), " + m[1] + " " + m[2].trim() });
+      }
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+// El calendario de la BEA (PIB, ingreso y gasto personal, comercio exterior de
+// EE. UU.): una tabla con «October 29 8:30 AM News GDP (Advance Estimate)…».
+// No trae el año en cada fila; es el calendario vigente, así que es el del lunes.
+async function agendaBea(sem) {
+  const fin = sumarDias(sem.lunes, 6);
+  try {
+    const r = await fetch("https://www.bea.gov/news/schedule", { headers: UA });
+    if (!r.ok) return [];
+    const html = await r.text();
+    const out = [];
+    for (const fila of html.match(/<tr[^>]*>[\s\S]*?<\/tr>/g) || []) {
+      const t = fila.replace(/<[^>]+>/g, " ").replace(/&amp;/g, "&").replace(/\s+/g, " ").trim();
+      const m = t.match(/^([A-Z][a-z]+)\s+(\d{1,2})\s+[\d:]+\s*[AP]M\s+N\s*ews\s+(.+)$/);
+      if (!m) continue;
+      const mes = MESES_EN.indexOf(m[1].toLowerCase()) + 1;
+      if (mes < 1) continue;
+      const fecha = sem.lunes.slice(0, 4) + "-" + String(mes).padStart(2, "0") + "-" + String(m[2]).padStart(2, "0");
+      if (fecha >= sem.lunes && fecha <= fin) {
+        out.push({ origen: "BEA", fecha: fecha, fuente: "Oficina de Análisis Económico de EE. UU. (BEA)",
+                   url: "https://www.bea.gov/news/schedule", texto: "La BEA publica " + m[3] + " (" + m[1] + " " + m[2] + ")" });
+      }
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+// ¿Dice la fuente esa fecha? «6 de noviembre» (con o sin «el»), o el día de la
+// semana que cae esa fecha. No basta con que el modelo la ponga.
+function verificarEvento(fecha, texto) {
+  const [a, m, d] = fecha.split("-").map(Number);
+  const t = String(texto || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+  const mes = MESES_LARGOS[m - 1].normalize("NFD").replace(/[̀-ͯ]/g, "");
+  if (new RegExp("\\b" + d + "\\s+de\\s+" + mes + "\\b").test(t)) return true;
+  const dia = DIAS_SEMANA[new Date(fecha + "T12:00:00Z").getUTCDay()].normalize("NFD").replace(/[̀-ͯ]/g, "");
+  return new RegExp("\\b(este|el|proximo|el proximo)\\s+" + dia + "\\b").test(t);
+}
+
+// Los eventos que el modelo propuso, filtrados: dentro de la semana que empieza,
+// con fuente de la lista y con la fecha confirmada. Máximo tres, por fecha.
+function eventosVerificados(lineas, sem, candidatos) {
+  const fin = sumarDias(sem.lunes, 6);
+  const out = [];
+  for (const l of lineas) {
+    const p = l.split("|").map((x) => x.trim());
+    if (p.length < 4) continue;
+    const ref = p[0].toUpperCase().replace(/[^A-Z0-9]/g, "");
+    const fecha = (p[1].match(/\d{4}-\d{2}-\d{2}/) || [""])[0];
+    const c = candidatos[ref];
+    if (!c || !fecha || fecha < sem.lunes || fecha > fin) {
+      console.log("[entorno] evento descartado (fuera de la semana o sin fuente): " + l.slice(0, 120));
+      continue;
+    }
+    const ok = c.origen === "FED" || c.origen === "BEA" ? c.fecha === fecha : verificarEvento(fecha, c.texto);
+    if (!ok) {
+      console.log("[entorno] evento descartado (la fuente no dice esa fecha): " + l.slice(0, 120));
+      continue;
+    }
+    if (out.some((e) => e.nombre === p[2])) continue;
+    out.push({ fecha: fecha, nombre: sinGuiones(p[2]), descripcion: sinGuiones(p.slice(3).join(" ")),
+               fuente: c.fuente || "", url: c.url || "" });
+  }
+  out.sort((x, y) => (x.fecha < y.fecha ? -1 : 1));
+  return out.slice(0, 3);
+}
+
+// EL PROMPT SIGUE LA GUÍA MAESTRA DE CONTENIDO (equipo de comunicación, 7 de
+// octubre de 2026). Cada límite de palabras, cada regla de formato y cada
+// criterio de selección de abajo viene de ahí; si la guía cambia, se cambia
+// aquí. Los límites además son las cajas de la plantilla verde (DAHWrdKhQZs):
+// pasarse no rompe la lámina, porque render.py encoge el texto, pero encogido
+// deja de parecerse a la plantilla.
+function promptEntorno(d, noticias, sem, agenda) {
   const lista = noticias
     .map((n, i) => {
       const etq = (n.g || "OTRO") + (n.p ? "/" + n.p : "");
       const medio = medioDe(n.t) || "";
-      // [directo]: el enlace es del propio medio y no un redirector de Google
-      // News, así que de ahí se puede sacar la foto de la página. Se le dice al
-      // modelo en vez de puntuarlo a escondidas: la elección sigue siendo
-      // editorial, solo que sabiendo qué noticia puede ir con foto.
       const directo = n.l && !/news\.google\./i.test(n.l) ? " [directo]" : "";
       const cab =
         `${i + 1}. [${etq}]${directo} ${sinMedio(n.t)}` +
@@ -1436,127 +1633,124 @@ function promptEntorno(d, noticias) {
       return res ? cab + "\n   → " + res : cab;
     })
     .join("\n");
+  const listaAgenda = Object.keys(agenda)
+    .map((k) => k + ". " + agenda[k].texto + (agenda[k].fuente ? " (" + agenda[k].fuente + ")" : ""))
+    .join("\n");
   return (
-    "Actúa como analista financiero y periodista económico senior especializado en " +
-    "el mercado venezolano y latinoamericano. Redactas la edición semanal de " +
-    "ENTORNO EN VIÑETAS, un newsletter ejecutivo de economía y finanzas.\n" +
-    "HOY ES " + fechaLarga(d.hoy) + ".\n\n" +
-    "ESTILO: directo, técnico, profesional pero ágil y fácil de leer. Sintético: " +
-    "cada bloque debe caber en una página de diagramación. Español de Venezuela.\n\n" +
-    "REGLAS DURAS:\n" +
-    "- NO inventes cifras. Solo puedes citar números que aparezcan en DATOS o en " +
-    "los TITULARES de abajo. Si no tienes un dato, no lo menciones.\n" +
-    "- No repitas la tabla de cifras: ese bloque lo arma el sistema aparte.\n" +
-    "- ESCRIBE TODO EN ESPAÑOL, sin una sola palabra en inglés. Si el titular " +
-    "original está en inglés, traduce y reescribe con tus palabras; nunca copies " +
-    "un titular tal cual.\n" +
-    "- Solo temas macroeconómicos, financieros o de negocios (bancos centrales, " +
-    "tasas, inflación, PIB, deuda, fiscal, comercio, empresas, M&A, commodities, " +
-    "energía, banca). NADA de migración, visas, clima, deportes, farándula ni " +
-    "estilo de vida, aunque aparezca en los titulares.\n" +
-    "- No menciones días de la semana ni 'hoy/ayer' salvo que la fecha esté en los " +
-    "datos o en el titular que usas.\n" +
-    "- Texto plano, sin markdown, sin asteriscos, sin viñetas dentro de los " +
-    "párrafos.\n" +
-    "- Respeta EXACTAMENTE los marcadores ### del formato. Nada fuera de ellos.\n\n" +
-    // LOS TOPES DE CARACTERES NO SON DE ESTILO: SON LAS CAJAS DE LA PLANTILLA.
-    // Se midieron sobre el Canva «entorno en viñetas» (DAHOniEgyiw) el
-    // 24/09/2026. El título de cada página va a 121 px en una caja de 610 de
-    // ancho y dos renglones, así que caben unos 22 caracteres; el cuerpo, unos
-    // 700 en su columna. Pasarse no rompe la lámina -render.py encoge el texto-,
-    // pero encogido a la mitad deja de parecerse a la plantilla, que es lo que
-    // pidió el dueño: añadir fotos e información, no cambiar el diseño.
+    "Eres el editor de ENTORNO EN VIÑETAS, el boletín semanal de SurEconomics: las noticias " +
+    "de la semana sobre Venezuela, cada una leída con tres lentes (económico, político y " +
+    "crecimiento).\n" +
+    "Esta edición sale el lunes " + fechaLarga(sem.lunes) + " y cubre la semana " +
+    rangoSemana(sem) + ". Los datos de mercado tienen fecha de corte el " + fechaLarga(sem.corte) + ".\n\n" +
+    "REGLAS QUE APLICAN A TODO (no negociables):\n" +
+    "1. PROHIBIDO usar guiones de cualquier tipo: ni guion, ni raya, ni flechas. Fechas escritas " +
+    "(«26 de junio», nunca «26-jun» ni «24-J»), rangos con palabras («del 12 al 18»), nombres " +
+    "compuestos con «y» («eje La Guaira y Caracas»), incisos entre comas, y en el texto las " +
+    "bajadas se dicen con palabras («baja 0,09%», nunca «-0,09%»).\n" +
+    "2. Formato numérico venezolano: punto para miles y coma para decimales (1.450; 7,5%). " +
+    "Moneda como US$ o Bs.\n" +
+    "3. Toda cifra sale de los DATOS o de los TITULARES de abajo, con su fuente nombrada en el " +
+    "texto. Si un dato no está ahí, no se publica. NO inventes cifras ni fechas.\n" +
+    "4. Usa siempre la cifra más reciente, no la del primer reporte (si un balance se " +
+    "actualizó, va el último, con su fecha).\n" +
+    "5. Tono neutro y descriptivo en los hechos. La opinión solo vive en el bloque de análisis " +
+    "(los tres lentes), y siempre argumentada con datos.\n" +
+    "6. Nada de relleno: ningún campo con texto genérico, repetido o de plantilla.\n" +
+    "7. Español de Venezuela, sin una palabra en inglés. Texto plano, sin markdown ni " +
+    "asteriscos. Respeta EXACTAMENTE los marcadores ### y las etiquetas de cada campo.\n\n" +
     "FORMATO EXACTO DE SALIDA:\n" +
-    "###CONTRAPORTADA\n" +
-    "Un solo párrafo de máximo 4 líneas que condense los temas centrales de esta " +
-    "edición y funcione como gancho. Debe mencionar al menos dos hechos concretos " +
-    "(con cifra o nombre propio), no generalidades.\n" +
-    "###NOTICIA1\n" +
-    "###NOTICIA2\n" +
-    "###NOTICIA3\n" +
-    "###NOTICIA4\n" +
-    "Son las 4 noticias de la semana, cada una bajo su propio marcador. La " +
-    "NOTICIA1 es la más relevante: abre la portada. Dentro de cada bloque van " +
-    "estas líneas, en este orden y cada una empezando por su etiqueta:\n" +
-    "TEMA: país o sector en MAYÚSCULAS, una o dos palabras, máximo 12 " +
-    "caracteres (VENEZUELA, PETRÓLEO, BANCA, FINANZAS).\n" +
-    "TITULO: el hecho en 2 a 4 palabras, máximo 22 caracteres. Es el rótulo " +
-    "grande de la página y tiene que decir QUÉ pasó, con un nombre propio o " +
-    "un hecho reconocible: «Terremotos del 24-J», «Chevron amplía licencia», " +
-    "«Récord del IBC». Si el hecho tiene protagonista (una persona, una " +
-    "empresa, un organismo), su nombre va en el título.\n" +
-    "SUBTITULO: el ángulo secundario de la misma noticia, máximo 40 caracteres: " +
-    "«OFAC responde a la emergencia (GL 60)».\n" +
-    "SUMARIO: una frase de máximo 110 caracteres que la resuma para el índice.\n" +
-    "FUENTE: solo el número del titular de la lista en que se basa (un dígito o " +
-    "dos, nada más). De ahí sale la foto de su página.\n" +
+    "###PORTADA\n" +
+    "TITULAR: el titular de la semana, máximo 12 palabras. Es la noticia 01 contada en una " +
+    "frase con gancho (ejemplo: «El petróleo ya salió del pozo. Falta que salga de la cuenta.»).\n" +
+    "###NOTICIA1\n###NOTICIA2\n###NOTICIA3\n###NOTICIA4\n" +
+    "Cuatro noticias de la semana SOBRE VENEZUELA, ordenadas de mayor a menor impacto. La 01 " +
+    "es la de mayor impacto económico medible; a igualdad, la que más afecta el bolsillo del " +
+    "lector. Dentro de cada bloque, estas líneas en este orden:\n" +
+    "TEMA: una sola palabra entre VENEZUELA, PETRÓLEO, FINANZAS, POLÍTICA o ENERGÍA.\n" +
+    "TITULO: el hecho en máximo 4 palabras y unos 22 caracteres, sin guiones (ejemplo: «Terremotos " +
+    "de junio»). Va a 121 px en una caja de dos renglones: una palabra larga no cabe.\n" +
+    "SUBTITULO: el ángulo específico que desarrolla la viñeta, máximo 8 palabras. Ese ángulo " +
+    "TIENE que aparecer explicado en el cuerpo (si el subtítulo nombra una licencia, el cuerpo " +
+    "explica esa licencia).\n" +
+    "FUENTE: solo el número del titular de la lista en que se basa.\n" +
+    "LUGAR: solo en la NOTICIA1: la ciudad o el lugar donde pasa el hecho, tal como se " +
+    "llama en Wikipedia (ejemplo: Caracas). De ahí sale la foto de fondo de la portada.\n" +
+    "PROTAGONISTA: solo en la NOTICIA1: la persona, institución u objeto protagonista, tal " +
+    "como se llama en Wikipedia (ejemplo: Fondo Monetario Internacional). Es la foto de la polaroid.\n" +
+    "SECUNDARIO: solo en la NOTICIA1: otro actor, institución u objeto de la misma noticia, " +
+    "distinto del protagonista, tal como se llama en Wikipedia. Es la foto de «¿Qué podría pasar?».\n" +
     "CUERPO:\n" +
-    "exactamente 3 párrafos cortos separados por una línea en blanco, entre los " +
-    "tres como máximo 700 caracteres: (1) el hecho y sus cifras, (2) su alcance, " +
-    "(3) el contexto.\n" +
-    // TRES VIÑETAS DESDE EL 24/09/2026, cuando Edición quitó de la plantilla el
-    // segundo bloque (el subtítulo repetido abajo con su párrafo) y dejó en la
-    // franja negra tres «▪». Lo que iba en ese bloque, un hecho distinto del
-    // cuerpo, pasa a ser la segunda viñeta.
-    // «De la MISMA historia» va en mayúsculas porque la primera prueba, pidiendo
-    // solo "un hecho distinto del cuerpo", puso en la página de la Bolsa de
-    // Caracas el titular de los expropiados por Chávez: otro hecho, sí, pero de
-    // otra noticia. Y el mínimo de 150 caracteres, porque sin él salían viñetas
-    // de 60 y la franja, pensada para tres de unos 330, quedaba medio vacía.
-    "LECTURA: nuestra lectura en exactamente 3 viñetas, una por línea, cada " +
-    "una empezando con «▪ » y de entre 150 y 250 caracteres, todas sobre ESTA " +
-    "noticia: (1) qué significa; (2) otro hecho de la MISMA historia que no " +
-    "esté en el cuerpo -una reacción, una medida, un antecedente- sacado de los " +
-    "titulares, o, si no lo hay, a quién afecta y cómo, sin añadir cifras; " +
-    "(3) qué toca vigilar. Ninguna repite lo que ya dice el cuerpo ni habla de " +
-    "otra noticia de la lista.\n" +
+    "exactamente 3 párrafos separados por una línea en blanco, máximo 120 palabras entre los " +
+    "tres: (1) qué pasó, con fecha y lugar; (2) las cifras clave, con su fuente nombrada; (3) " +
+    "quién respondió o qué cambió.\n" +
+    "ECONOMICO: qué le cuesta o le aporta esto a la economía o al bolsillo, CON UNA CIFRA. " +
+    "Máximo 50 palabras.\n" +
+    "POLITICO: qué cambia en las relaciones de poder, la regulación o la relación con Estados " +
+    "Unidos. Máximo 50 palabras.\n" +
+    "CRECIMIENTO: qué oportunidad o riesgo abre para la inversión en los próximos meses. " +
+    "Máximo 50 palabras.\n" +
+    "Los tres lentes responden preguntas distintas y NINGUNO repite lo que ya dice el cuerpo.\n" +
+    "###EVENTOS\n" +
+    "Hasta 3 eventos de la semana que empieza el " + fechaLarga(sem.lunes) + " que pueden " +
+    "mover la economía venezolana (publicación de datos oficiales, vencimientos de licencias " +
+    "OFAC, decisiones de la Reserva Federal, elecciones, subastas de divisas, reuniones de la " +
+    "OPEP+, vencimientos de deuda), SOLO de la lista AGENDA de abajo y con una fecha que esa " +
+    "lista diga. Una línea por evento, con este formato exacto:\n" +
+    "REF | AAAA-MM-DD | nombre del evento en máximo 6 palabras | descripción de máximo 25 " +
+    "palabras que empieza por la fecha escrita y dice por qué importa\n" +
+    "(ejemplo: A3 | 2026-11-06 | BCV publica inflación de octubre | Viernes 6 de noviembre. " +
+    "Dirá si la inflación mensual sigue en un dígito por tercer mes.)\n" +
+    "Si la lista no trae tres eventos con fecha confirmada en esa semana, pon solo los que " +
+    "haya. NUNCA inventes un evento ni una fecha.\n" +
+    "###ESCENARIO\n" +
+    "¿Qué podría pasar?: escenario sobre la NOTICIA1 para las próximas semanas, en 2 párrafos " +
+    "y máximo 120 palabras. Es la única sección que especula, y lo hace con condiciones " +
+    "claras. El primer párrafo plantea el escenario más probable y la condición que lo " +
+    "activa; el segundo, el alternativo y qué señal lo anticiparía. Estructura: «Si " +
+    "[condición], lo más probable es [resultado], porque [dato]. Si en cambio [condición " +
+    "alternativa], [resultado alternativo]. La señal a vigilar: [indicador o evento].»\n" +
     "###LATAM\n" +
-    "Exactamente 4 párrafos de países DISTINTOS de América Latina (Estados " +
-    "Unidos, Europa y Asia NO cuentan como país de la región, aunque la noticia " +
-    "afecte a Latam), separados por una línea con tres guiones (---). Cada " +
-    "párrafo empieza con el país como sujeto («México sorprendió: sus " +
-    "exportaciones…») y tiene máximo 230 caracteres. No incluyas Venezuela aquí " +
-    "(ya va en las 4 noticias).\n" +
+    "Exactamente 3 puntos, uno por país de América Latina distinto de Venezuela, separados " +
+    "por una línea con tres guiones bajos (___). Cada punto empieza por el nombre del país y " +
+    "trae una cifra, máximo 50 palabras (ejemplo: «Argentina sale de la recesión: crecería " +
+    "cerca de 4,5% este año, con una inflación que bajó de tres dígitos a cerca de 14%.»). " +
+    "Prioriza Colombia y Brasil (vecinos y socios comerciales), luego Argentina y México, y " +
+    "después el resto. Solo entra lo que sirve de comparación o tiene efecto sobre Venezuela. " +
+    "El primero es el más fuerte.\n" +
+    "###LATAM_CONCLUSION\n" +
+    "Una conclusión de máximo 40 palabras que conecte los tres puntos, idealmente con una " +
+    "lectura para Venezuela.\n" +
     "###LATAM_FUENTE\n" +
-    "Los números de los titulares en que se basa cada párrafo de LATAM, en el " +
-    "mismo orden y separados por comas (por ejemplo: 12, 15, 9, 20). De ahí " +
-    "sale la foto de esa página.\n\n" +
-    "CÓMO ELEGIR:\n" +
-    "- Prefiere hechos con cifra, decisión de política económica u operación " +
-    "concreta (emisión, crédito, adquisición, dato oficial). Evita declaraciones, " +
-    "polémicas verbales y peleas políticas sin efecto económico medible.\n" +
-    "- Las 4 noticias salen de HECHOS concretos de los titulares marcados [VZ] " +
-    "(una decisión, una cifra publicada, una operación, un anuncio) y usan las " +
-    "cifras del cuadro como soporte. Al menos 3 son de Venezuela; la cuarta " +
-    "puede ser internacional si afecta directamente a Venezuela (petróleo, " +
-    "sanciones, Reserva Federal). Cada una cuenta un hecho DISTINTO: dos " +
-    "noticias del mismo hecho son una sola. Ninguna puede ser solo la lectura " +
-    "de la tabla.\n" +
-    "- Cada noticia tiene su foto en la plantilla, y solo se puede sacar de los " +
-    "titulares marcados [directo]. Entre dos hechos de relevancia parecida, " +
-    "elige el [directo]. No elijas uno flojo solo porque lo sea.\n" +
-    "- La tasa del BCV, la paralela, la brecha, la devaluación, la inflación y " +
-    "las cotizaciones de mercados YA TIENEN SU PÁGINA (Economía en cifras). Una " +
-    "noticia cuyo hecho sea solo que una de esas cifras subió o bajó está " +
-    "repetida: descártala aunque el titular sea de un medio, y elige otro " +
-    "hecho. Esas cifras sí pueden aparecer como contexto dentro de otra " +
-    "noticia.\n" +
-    "- Los 4 ítems de Latam salen de los titulares marcados [LATAM] o [GLOBAL] con " +
-    "efecto en la región. Si un país no tiene noticia económica útil, usa otro.\n\n" +
+    "Los números de los titulares de cada punto de LATAM, en orden y separados por comas.\n" +
+    "###LATAM_PAIS\n" +
+    "El país del primer punto, en una palabra o dos.\n\n" +
+    "CÓMO ELEGIR LAS CUATRO NOTICIAS:\n" +
+    "- Hechos concretos de los titulares marcados [VZ] y publicados en la semana cubierta: " +
+    "una decisión, una cifra oficial, una operación, un anuncio. Nada de declaraciones sin " +
+    "efecto económico medible.\n" +
+    "- Fuentes válidas: BCV, Gaceta Oficial, OFAC y Departamento del Tesoro, Departamento de " +
+    "Estado, PDVSA, OPEP, PNUD, Banco Mundial, FMI y medios con verificación editorial. Redes " +
+    "sociales solo si es una cuenta oficial.\n" +
+    "- Cada noticia cuenta un hecho DISTINTO. Entre dos de relevancia parecida, elige la " +
+    "marcada [directo]: de ahí sale su foto.\n" +
+    "- La tasa del BCV, el paralelo, la brecha, la devaluación, la inflación y los mercados " +
+    "ya tienen su página (Economía en cifras): una noticia que sea solo que una de esas " +
+    "cifras subió o bajó está repetida. Sí pueden ir como contexto.\n\n" +
     "DATOS DUROS (calculados por el sistema, son la verdad):\n" +
     resumenDatosParaIA(d) +
-    "\n\nTITULARES RECIENTES. La línea que empieza con '→' es el resumen de esa " +
-    "noticia: úsalo para dar detalle concreto. Si un dato no está en el titular " +
-    "ni en su resumen, NO lo afirmes.\n" +
+    "\n\nAGENDA (candidatos para ###EVENTOS; cada uno con su referencia):\n" +
+    (listaAgenda || "(sin candidatos esta semana)") +
+    "\n\nTITULARES. La línea que empieza con '→' es el resumen de esa noticia: úsalo para el " +
+    "detalle. Si un dato no está en el titular ni en su resumen, NO lo afirmes.\n" +
     lista +
     "\n\nEscribe ahora la edición."
   );
 }
 
-// Los campos de cada bloque ###NOTICIAn. Se aceptan con tilde y sin ella
-// («TÍTULO», «SUBTÍTULO») y con los asteriscos que a veces pone el modelo aunque
-// se le pida texto plano: un campo que no se reconoce es una lámina con un hueco.
-const CAMPOS_NOTICIA = /^\s*\**\s*(TEMA|T[IÍ]TULO|SUBT[IÍ]TULO|SUMARIO|FUENTE|CUERPO|LECTURA|TEXTO\s*2)\s*\**\s*:\s*\**/gim;
+// Los campos de cada bloque ###NOTICIAn. Se aceptan con tilde y sin ella y con
+// los asteriscos que a veces pone el modelo aunque se le pida texto plano: un
+// campo que no se reconoce es una lámina con un hueco.
+const CAMPOS_NOTICIA = /^\s*\**\s*(TEMA|T[IÍ]TULO|SUBT[IÍ]TULO|SUMARIO|FUENTE|LUGAR|PROTAGONISTA|SECUNDARIO|CUERPO|ECON[OÓ]MICO|POL[IÍ]TICO|CRECIMIENTO|LECTURA|TEXTO\s*2)\s*\**\s*:\s*\**/gim;
 
 function parseNoticia(bloque) {
   const out = {};
@@ -1572,65 +1766,59 @@ function parseNoticia(bloque) {
     const hasta = i + 1 < marcas.length ? marcas[i + 1].i : bloque.length;
     out[marcas[i].k] = bloque.slice(marcas[i].fin, hasta).trim();
   }
+  const limpio = (s) => sinGuiones(String(s || "").replace(/^[\s▪•*]+/, ""));
   return {
-    tema: (out.TEMA || "").toUpperCase(),
-    titulo: out.TITULO || "",
-    subtitulo: out.SUBTITULO || "",
-    sumario: out.SUMARIO || "",
+    tema: (out.TEMA || "").toUpperCase().split(/\s+/)[0] || "",
+    titulo: limpio(out.TITULO),
+    subtitulo: limpio(out.SUBTITULO),
     fuente: parseInt((out.FUENTE || "").match(/\d+/) || [NaN], 10),
-    cuerpo: out.CUERPO || "",
-    // Las viñetas, sin su marca: la pone render.py, que es quien dibuja. Una
-    // por línea; si el modelo las junta en un párrafo, queda una sola.
-    lectura: (out.LECTURA || "")
-      .split(/\n+/)
-      .map((l) => l.replace(/^[\s▪•\-*]+/, "").trim())
-      .filter(Boolean)
-      .slice(0, 3),
-    // Ya no se pide (ver LECTURA en promptEntorno); se lee por si una edición
-    // vieja lo trae.
-    texto2: out.TEXTO2 || "",
+    lugar: limpio(out.LUGAR),
+    protagonista: limpio(out.PROTAGONISTA),
+    secundario: limpio(out.SECUNDARIO),
+    cuerpo: (out.CUERPO || "").split(/\n\s*\n/).map(sinGuiones).filter(Boolean).join("\n\n"),
+    lentes: { economico: limpio(out.ECONOMICO), politico: limpio(out.POLITICO), crecimiento: limpio(out.CRECIMIENTO) },
   };
 }
 
 function parseSecciones(txt) {
   const out = {};
-  const re = /###\s*(CONTRAPORTADA|NOTICIA\s*[1-4]|LATAM_FUENTE|LATAM|NICHO|TITULAR|SUBTITULO|CUERPO|FUENTE)\s*\n?/gi;
+  const re = /###\s*(PORTADA|NOTICIA\s*[1-4]|EVENTOS|ESCENARIO|LATAM_CONCLUSION|LATAM_FUENTE|LATAM_PAIS|LATAM|CONTRAPORTADA)\s*\n?/gi;
   const marcas = [];
   let m;
   while ((m = re.exec(txt)) !== null) {
-    // «NOTICIA 1» y «NOTICIA1» son el mismo marcador.
     marcas.push({ k: m[1].toUpperCase().replace(/\s+/g, ""), i: m.index, fin: re.lastIndex });
   }
   for (let i = 0; i < marcas.length; i++) {
     const hasta = i + 1 < marcas.length ? marcas[i + 1].i : txt.length;
     out[marcas[i].k] = txt.slice(marcas[i].fin, hasta).trim();
   }
-  // Las 4 noticias se entregan ya partidas en sus campos. Se descartan las que
-  // no traen ni título ni cuerpo: una página con la plantilla vacía es peor
-  // que una página menos.
   out.noticias = [1, 2, 3, 4]
     .map((n) => (out["NOTICIA" + n] ? parseNoticia(out["NOTICIA" + n]) : null))
     .filter((x) => x && (x.titulo || x.cuerpo));
+  out.titular = sinGuiones((out.PORTADA || "").replace(/^\s*\**\s*TITULAR\s*\**\s*:\s*/i, "").split("\n")[0]);
   return out;
 }
 
 // --- Armado de la edición ---
 async function buildEntorno(env) {
-  const [datos, gVz, gLatam, gGlobal, tVz, tLatam, guardadas] = await Promise.all([
-    gatherEntornoData(env),
+  const sem = semanaEntorno(hoyVET());
+  const [datos, gVz, gLatam, gGlobal, tVz, tLatam, guardadas, gAgenda, fed, bea, ...gVzExtra] = await Promise.all([
+    gatherEntornoData(env, sem.corte),
     fetchNews(ENTORNO_Q_VZ, 12),
     fetchNews(ENTORNO_Q_LATAM, 12),
     fetchNews(ENTORNO_Q_GLOBAL, 8),
     fetchWebNews(env, "Venezuela economía dólar inflación petróleo esta semana", 6),
     fetchWebNews(env, "América Latina economía banco central empresas esta semana", 6),
     kvGet(env, "articles", []),
+    fetchNews(ENTORNO_Q_AGENDA, 15),
+    agendaFed(sem),
+    agendaBea(sem),
+    ...ENTORNO_Q_VZ_EXTRA.map((q) => fetchNews(q, 12)),
   ]);
-  // Curadas (queries económicas) + historial de KV, que sí exige señal económica
-  // porque viene de feeds generalistas. Los [VZ] van primero para que el modelo
-  // los tenga a la vista al elegir la noticia principal.
   const curadas = filtrarNoticias(
     [].concat(
       etiquetar(gVz, "VZ"),
+      etiquetar([].concat(...gVzExtra), "VZ"),
       etiquetar(tVz, "VZ"),
       etiquetar(gLatam, "LATAM"),
       etiquetar(tLatam, "LATAM"),
@@ -1639,46 +1827,68 @@ async function buildEntorno(env) {
     true
   );
   const delHistorial = filtrarNoticias(
-    etiquetar(guardadas.slice(0, 60), "LATAM").map((n) =>
+    etiquetar(guardadas.slice(0, 200), "LATAM").map((n) =>
       /venezuela|bcv|pdvsa|bol[íi]var|caracas/i.test(n.t) ? Object.assign(n, { g: "VZ" }) : n
     ),
     true
   );
-  const noticias = seleccionarNoticias(mergeNews(curadas, delHistorial, 120));
+  // SOLO LA SEMANA CUBIERTA. La guía: «cubre la semana anterior, de lunes a
+  // domingo». Las que no traen fecha se quedan (no se puede decir que sean
+  // viejas). Si la semana deja menos de seis de Venezuela —pasa si se arma a
+  // mitad de semana—, se vuelve a la ventana de doce días y se dice en el log.
+  const enSemana = (n) => {
+    const ts = Date.parse(n.d || "");
+    if (!ts) return true;
+    const dia = fechaVET(ts);
+    return dia >= sem.desde && dia <= sem.hasta;
+  };
+  let pozo = mergeNews(curadas, delHistorial, 120);
+  const semanal = pozo.filter(enSemana);
+  if (semanal.filter((n) => n.g === "VZ").length >= 6) pozo = semanal;
+  else console.log("[entorno] la semana " + sem.desde + "/" + sem.hasta + " trae pocas de Venezuela; uso doce días");
+  const noticias = seleccionarNoticias(pozo);
 
-  const redaccion = await aiEntorno(env, promptEntorno(datos, noticias));
+  // La agenda: F1.. de la Reserva Federal, A1.. de la prensa (ver agendaFed).
+  const agenda = {};
+  fed.forEach((e, i) => { agenda["F" + (i + 1)] = e; });
+  bea.forEach((e, i) => { agenda["B" + (i + 1)] = e; });
+  filtrarNoticias(gAgenda, false).slice(0, 15).forEach((n, i) => {
+    agenda["A" + (i + 1)] = { origen: "PRENSA", texto: sinMedio(n.t) + (resumenUtil(n) ? ". " + resumenUtil(n) : ""),
+                              fuente: medioDe(n.t), url: n.l || "" };
+  });
+
+  const redaccion = await aiEntorno(env, promptEntorno(datos, noticias, sem, agenda));
   const crudo = redaccion.texto;
   console.log("[entorno] la escribió " + redaccion.quien);
   const s = parseSecciones(crudo);
+  const eventos = eventosVerificados((s.EVENTOS || "").split("\n").filter((l) => l.includes("|")), sem, agenda);
 
-  // FOTOS: UNA POR NOTICIA Y OTRA PARA LATAM, Y NINGUNA REPETIDA.
-  //
-  // La plantilla de septiembre de 2026 pide cinco fotos donde la anterior pedía
-  // una: la del titular que citó el modelo para cada noticia y la del primer
-  // párrafo de Latam. Se piden TODAS A LA VEZ: en serie eran cinco descargas de
-  // HTML una detrás de otra, y el Worker no tiene ese tiempo. Son cinco a lo
-  // sumo, que caben de sobra en las 50 subpeticiones por invocación del plan
-  // gratuito de Cloudflare.
-  //
-  // CADA PÁGINA LLEVA LA FOTO DE SU NOTICIA O NINGUNA. No se rellena con la de
-  // otro titular libre del pozo: eso es poner la foto de una noticia encima de
-  // otra, que en el medio ya dio un derrame petrolero ilustrando la firma de un
-  // acuerdo energético. Una página sin foto la resuelve render.py.
+  // FOTOS: una por viñeta y otra para Latam, ninguna repetida, todas pedidas a
+  // la vez (ver la nota de septiembre en la versión anterior: en serie no hay
+  // tiempo). El fondo de portada y la foto de «¿Qué podría pasar?» las pone
+  // render.py desde Wikidata (LUGAR y PROTAGONISTA de la noticia 01).
   const todas = [].concat(curadas, delHistorial);
   const elegida = (k) => enlaceDirecto((Number.isFinite(k) && noticias[k - 1]) || null, todas);
-  // Latam trae la fuente de cada párrafo y se prueba en orden hasta dar con
-  // foto: así la de la página es siempre de algo que se cuenta en ella.
   const fuentesLatam = ((s.LATAM_FUENTE || "").match(/\d+/g) || [])
-    .slice(0, 4)
+    .slice(0, 3)
     .map((k) => elegida(parseInt(k, 10)))
     .filter(Boolean);
+  // UNA VIÑETA SIN TITULAR DE ORIGEN SE DESCARTA. Es una noticia que el modelo
+  // armó con la tabla de cifras o de memoria: la guía pide «toda cifra con
+  // fuente real», y el 09/10/2026 salieron tres así. Mejor una viñeta menos (el
+  // chequeo lo avisa) que una noticia sin fuente.
+  s.noticias = s.noticias.filter((nt) => {
+    const ok = Number.isFinite(nt.fuente) && noticias[nt.fuente - 1];
+    if (!ok) console.log("[entorno] viñeta descartada, sin titular de origen: " + nt.titulo);
+    return ok;
+  });
   const fuentes = s.noticias.map((nt) => elegida(nt.fuente));
-  const pozo = [];
+  const pozoFotos = [];
   for (const n of fuentes.concat(fuentesLatam)) {
-    if (n && n.l && !pozo.some((c) => c.l === n.l)) pozo.push(n);
+    if (n && n.l && !pozoFotos.some((c) => c.l === n.l)) pozoFotos.push(n);
   }
   const imagenes = new Map(
-    await Promise.all(pozo.map(async (n) => [n.l, await ogImagen(n.l)]))
+    await Promise.all(pozoFotos.map(async (n) => [n.l, await ogImagen(n.l)]))
   );
   const usadas = new Set();
   const foto = (n) => {
@@ -1698,48 +1908,44 @@ async function buildEntorno(env) {
       fuenteTitulo: src ? sinMedio(src.t) : "",
     });
   });
-  const itemsLatam = (s.LATAM || "")
-    .split(/\n?-{3,}\n?/)
-    .map((x) => x.trim())
+  const puntos = (s.LATAM || "")
+    .split(/\n?(?:_{3,}|-{3,})\n?/)
+    .map((x) => sinGuiones(x.replace(/^[\s▪•*]+/, "")))
     .filter(Boolean)
-    .slice(0, 4);
-  let latam = { items: itemsLatam, imagen: "", url: "" };
-  for (const n of fuentesLatam) {
-    const img = foto(n);
-    if (img) {
-      latam = { items: itemsLatam, imagen: img, url: n.l || "" };
-      break;
-    }
-  }
+    .slice(0, 3);
+  const latam = { puntos: puntos, conclusion: sinGuiones(s.LATAM_CONCLUSION || ""),
+                  pais: sinGuiones((s.LATAM_PAIS || "").split("\n")[0]), imagen: "", url: "", medio: "" };
+  // La foto de Latam es la del punto más fuerte (el primero), según la guía.
+  const lat0 = fuentesLatam[0];
+  if (lat0) Object.assign(latam, { imagen: foto(lat0), url: lat0.l || "", medio: medioDe(lat0.t) });
+  const escenario = (s.ESCENARIO || "").split(/\n\s*\n/).map(sinGuiones).filter(Boolean).join("\n\n");
 
-  const cabecera =
-    "📰 <b>ENTORNO EN VIÑETAS</b> — Resumen semanal\n" +
-    "<i>" + fechaLarga(datos.hoy) + " · Sureconomics</i>";
-
-  // UNA NOTICIA POR MENSAJE. Con cuatro noticias enteras en un solo mensaje se
-  // pasa de los 4.096 caracteres que admite Telegram, y un mensaje rechazado
-  // por largo no llega a nadie.
   const partes = [];
   if (notas.length) {
     partes.push(
-      cabecera + "\n\n" +
-        (s.CONTRAPORTADA ? escapeHtml(s.CONTRAPORTADA) + "\n\n" : "") +
+      "📰 <b>ENTORNO EN VIÑETAS</b>\n<i>Semana " + escapeHtml(rangoSemana(sem)) + " · SurEconomics</i>\n\n" +
+        (s.titular ? "<b>" + escapeHtml(s.titular) + "</b>\n\n" : "") +
         "<b>En esta edición</b>\n" +
-        notas
-          .map((n) => "(0" + n.numero + ") <b>" + escapeHtml(n.titulo) + "</b> — " + escapeHtml(n.sumario))
-          .join("\n")
+        notas.map((n) => "(0" + n.numero + ") <b>" + escapeHtml(n.titulo) + "</b>: " + escapeHtml(n.subtitulo)).join("\n")
     );
     for (const n of notas) partes.push(textoNoticia(n));
   } else {
     // Si el modelo no respetó los marcadores, mandamos su texto tal cual: es
     // mejor una edición imperfecta que ninguna.
-    partes.push(cabecera + "\n\n" + escapeHtml(crudo));
+    partes.push("📰 <b>ENTORNO EN VIÑETAS</b>\n\n" + escapeHtml(crudo));
   }
+  partes.push(
+    "<b>¿Qué estamos esperando?</b>\n\n" +
+      (eventos.length
+        ? eventos.map((e, i) => "0" + (i + 1) + " <b>" + escapeHtml(e.nombre) + "</b>\n" + escapeHtml(e.descripcion)).join("\n\n")
+        : "<i>Sin eventos con fecha confirmada para esta semana.</i>") +
+      (escenario ? "\n\n<b>¿Qué podría pasar?</b>\n\n" + escapeHtml(escenario) : "")
+  );
   partes.push(bloqueCifras(datos));
-  if (itemsLatam.length) {
+  if (puntos.length) {
     partes.push(
       "<b>🌎 LATAM ENLATADA</b>\n\n" +
-        itemsLatam.map((x) => "• " + escapeHtml(x)).join("\n\n") +
+        puntos.concat(latam.conclusion ? [latam.conclusion] : []).map((x) => "• " + escapeHtml(x)).join("\n\n") +
         "\n\n" + bloqueFuentes(noticias)
     );
   } else {
@@ -1752,14 +1958,14 @@ async function buildEntorno(env) {
     fecha: datos.hoy,
     parts: partes,
     datos: datos,
-    // Para el renderizador de láminas (entorno/render.py): los campos sueltos,
-    // no el texto ya maquetado para Telegram.
     secciones: s,
     noticias: notas,
     latam: latam,
+    semana: { desde: sem.desde, hasta: sem.hasta, lunes: sem.lunes },
+    titular: s.titular || "",
+    eventos: eventos,
+    escenario: escenario,
     escrita_por: redaccion.quien,
-    // 'portada' es lo que leía render.py antes de las cuatro noticias. Se deja
-    // apuntando a la principal para que un render viejo no se quede sin foto.
     portada: principal
       ? { titulo: principal.fuenteTitulo, medio: principal.medio, url: principal.url,
           fecha: "", imagen: principal.imagen }
@@ -1770,15 +1976,17 @@ async function buildEntorno(env) {
   };
 }
 
-// Una noticia de la edición, como mensaje de Telegram. El subtítulo va una vez,
-// encabezando su propio bloque: en la lámina sale dos veces porque la plantilla
-// lo usa también de antetítulo, pero en texto corrido repetirlo es ruido.
+// Una viñeta de la edición, como mensaje de Telegram: cuerpo y los tres lentes.
 function textoNoticia(n) {
+  const lentes = n.lentes || {};
+  const L = [["economico", "Económico"], ["politico", "Político"], ["crecimiento", "Crecimiento"]]
+    .filter(([k]) => lentes[k])
+    .map(([k, nombre]) => "\n\n▪ <b>" + nombre + ":</b> " + escapeHtml(lentes[k]));
+  const viejas = L.length ? [] : [].concat(n.lectura || []).map((l) => "\n\n▪ <i>" + escapeHtml(l) + "</i>");
   return (
-    "<b>(0" + n.numero + ") " + escapeHtml(n.tema) + " · " + escapeHtml(n.titulo) + "</b>\n\n" +
-    escapeHtml(n.cuerpo) +
-    [].concat(n.lectura || []).map((l) => "\n\n▪ <i>" + escapeHtml(l) + "</i>").join("") +
-    (n.texto2 ? "\n\n<b>" + escapeHtml(n.subtitulo) + "</b>\n" + escapeHtml(n.texto2) : "") +
+    "<b>(0" + n.numero + ") " + escapeHtml(n.tema) + " · " + escapeHtml(n.titulo) + "</b>\n" +
+    (n.subtitulo ? "<i>" + escapeHtml(n.subtitulo) + "</i>\n" : "") + "\n" +
+    escapeHtml(n.cuerpo) + L.join("") + viejas.join("") +
     (n.url ? '\n\n<a href="' + escapeHtml(n.url) + '">Fuente: ' + escapeHtml(n.medio || "nota original") + "</a>" : "")
   );
 }
