@@ -149,6 +149,7 @@ cambia.** Para ver qué cambió: leer el diseño por la API, exportar a
 | Regla de la guía | Dónde |
 |---|---|
 | Sale el lunes y cubre la semana anterior, de lunes a domingo | `semanaEntorno()` (Worker) y `semana_cubierta()` (render) |
+| Portada: «Edición N.º 3 · Lunes 12 de octubre de 2026», **sin la semana** (Saúl, 09/10/2026) | `fecha_de_salida()` en render |
 | Edición N.º correlativa | `numero_de_edicion()`: números del boletín **enviados** antes de ese lunes, más uno (decisión de Saúl). Sin panel, ancla N.º 3 = 12/10/2026 |
 | Una sola fecha de corte: el cierre del viernes | `gatherEntornoData(env, corte)`: mercados, tasas e IBC a esa fecha |
 | ▲ y ▼ en cifras de mercado; fechas escritas | `flecha()`, `fecha_sin_anio()` en render |

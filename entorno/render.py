@@ -505,8 +505,8 @@ def chequeo(ed, notas, latam, fotos):
     def punto(ok, nombre, detalle=""):
         out.append(("ok" if ok else "aviso", nombre, detalle))
 
-    # 1. Numero de edicion y semana.
-    punto(bool(ed.get("edicion")) and bool(rango_semana(ed)), "Número de edición y semana en la portada",
+    # 1. Numero de edicion y fecha (desde el 09/10/2026, el lunes de salida y no la semana).
+    punto(bool(ed.get("edicion")) and bool(fecha_de_salida(ed)), "Número de edición y fecha en la portada",
           "" if ed.get("edicion") else "falta el número de edición")
     # 2. Titular de portada = vineta 01.
     n1 = notas[0] if notas else {}
@@ -651,6 +651,21 @@ def rango_semana(ed):
     if m0 != m1:
         return "del %d de %s al %d de %s de %s" % (int(d0), MESES[int(m0) - 1], int(d1), MESES[int(m1) - 1], a1)
     return "del %d al %d de %s de %s" % (int(d0), int(d1), MESES[int(m1) - 1], a1)
+
+
+def fecha_de_salida(ed):
+    """«Lunes 12 de octubre de 2026»: el lunes en que sale la edicion, que es el
+    dia siguiente al ultimo de la semana cubierta. Lo que va en la portada desde
+    el 09/10/2026: Saul pidio quitar la semana y dejar solo la edicion y el lunes."""
+    from datetime import timedelta
+    s = ed.get("semana") or {}
+    if s.get("lunes"):
+        l = date.fromisoformat(s["lunes"][:10])
+    elif s.get("hasta"):
+        l = date.fromisoformat(s["hasta"][:10]) + timedelta(days=1)
+    else:
+        return ""
+    return "Lunes %d de %s de %d" % (l.day, MESES[l.month - 1], l.year)
 
 
 def flecha(v, dec=2):
@@ -892,7 +907,7 @@ def html_portada(ed, fotos, notas, latam):
     partes.append("<div class='a hg' data-fit='h:100' style='%s'>%s</div>" % (caja(
         158.75, 315.43, 1035.72, None,
         "font-size:42.57px;line-height:0.96;letter-spacing:0.072em;"),
-        esc("Edición N.º %s · Semana %s" % (ed.get("edicion", ""), rango_semana(ed)))))
+        esc("Edición N.º %s · %s" % (ed.get("edicion", ""), fecha_de_salida(ed)))))
     partes.append("<div class='a i tt' style='%s'>Entorno en Viñetas</div>" % caja(
         153.91, 405.65, 1040.55, None, "font-size:191.76px;"))
     pila = recurso_privado("pila.png")
