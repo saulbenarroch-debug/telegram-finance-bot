@@ -171,6 +171,7 @@ una prioridad (cuánto puede mover a Venezuela) y un texto propio:
 | BEA | PIB, ingreso y gasto (PCE), comercio exterior | `agendaBea` |
 | Oficina del Censo, `calendar-listview-AAAA.html` | ventas minoristas, bienes duraderos, vivienda | `agendaCenso` |
 | TreasuryDirect (JSON) | subastas de notas y bonos | `agendaTesoro` |
+| ForexFactory (`ff_calendar_thisweek.json`, agregador) | inflación y empleo de EE. UU. (la BLS da 403), OPEP+, discursos de Trump, BCE, Banco de Inglaterra, Banco de Japón, China | `agendaForex` |
 | Prensa (`ENTORNO_Q_AGENDA`) | BCV, OPEP+, OFAC… solo si el titular dice la fecha (`verificarEvento`) | — |
 
 El modelo ve los candidatos con su fecha y elige; `eventosVerificados()` tira lo
@@ -178,6 +179,18 @@ que no cuadre con la fuente, **ordena todo por prioridad y se queda con tres**
 (lo de la prensa venezolana va primero), completando con los textos propios de
 los oficiales. Con crudo y gas semanales el piso es de dos eventos; probado de
 octubre a diciembre de 2026, las doce semanas salen con tres.
+
+**Y tiene que ser variada** (Saúl, 09/10/2026: «no es para poner eventos de EIA
+todas las semanas»). Cada candidato tiene una **familia** (`familiaDe`: FED,
+DATOS_EEUU, EIA, TESORO, OPEP, CASA_BLANCA, OTROS_BC, CHINA, PRENSA) y la
+selección toma **como mucho uno por familia** (dos de la prensa venezolana);
+solo si no llega a tres relaja ese tope. Lo semanal (crudo 30, gas 20, subastas
+26-28) tiene prioridad baja a propósito: es el relleno, no la noticia.
+
+**ForexFactory solo publica la semana EN CURSO** y da 429 si se le pide seguido:
+el cron de 3 h la baja y la guarda en KV (`forex:semana`, `bajarForex`), y la
+agenda lee de ahí. Sirve para la edición que se prearma el lunes, que es la de
+esa semana; si se arma otro día, la agenda vive de los calendarios oficiales.
 
 **Trampas:** `calendar-listview.html` del Censo trae el año QUE VIENE (el
 corriente es `calendar-listview-AAAA.html`); la página de eventos de la Fed se

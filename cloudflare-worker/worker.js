@@ -384,6 +384,9 @@ export default {
       ctx.waitUntil(dispararWorkflow(env, "vigilancia.yml", { horas: "1" }));
     } else {
       ctx.waitUntil(ingest(env));
+      // El calendario de ForexFactory, guardado en KV cada tres horas: limita
+      // las peticiones (429) y el lunes no puede faltar. Ver agendaForex().
+      ctx.waitUntil(bajarForex(env));
     }
   },
 };
@@ -966,6 +969,7 @@ function sinGuiones(s) {
     .replace(/[ \t]+[-–—][ \t]+/g, ", ")
     .replace(/([A-Za-zÁÉÍÓÚáéíóúÑñ])[–—]([A-Za-zÁÉÍÓÚáéíóúÑñ])/g, "$1 y $2")
     .replace(/,\s*,/g, ",")
+    .replace(/\bpdvsa\b/gi, "PDVSA")  // norma de la casa (Saúl, 09/10/2026)
     .replace(/[ \t]{2,}/g, " ")
     .trim();
 }
@@ -1565,8 +1569,10 @@ async function agendaFed(sem) {
           out.push(oficial("FED", fecha, 60, "Reserva Federal", URLF, t, "Habla el presidente de la Fed",
             "Cualquier señal sobre las tasas de interés de Estados Unidos mueve el dólar y el precio del petróleo."));
         } else if (/^G\.17/.test(t)) {
-          out.push(oficial("FED", fecha, 40, "Reserva Federal", URLF, t, "Producción industrial de EE. UU.",
-            "El dato de la Reserva Federal mide la actividad de la industria estadounidense y su demanda de energía."));
+          const g17 = oficial("FED", fecha, 40, "Reserva Federal", URLF, t, "Producción industrial de EE. UU.",
+            "El dato de la Reserva Federal mide la actividad de la industria estadounidense y su demanda de energía.");
+          g17.familia = "DATOS_EEUU";
+          out.push(g17);
         }
       }
     }
@@ -1599,7 +1605,9 @@ async function agendaEia(sem) {
   } catch {
     return [];
   }
-  const out = [oficial("EIA", fecha, 58, "Administración de Información Energética de EE. UU. (EIA)", URLE,
+  // Prioridad baja A PROPOSITO: sale todas las semanas, y la agenda no puede
+  // ser siempre la misma. Entra solo si no hay nada mejor.
+  const out = [oficial("EIA", fecha, 30, "Administración de Información Energética de EE. UU. (EIA)", URLE,
     "Weekly Petroleum Status Report", "Inventarios de crudo de EE. UU.",
     "El informe semanal de la EIA mueve el precio del petróleo, del que dependen los ingresos de Venezuela.")];
   // Y el informe mensual de perspectivas (STEO), con la proyección del precio
@@ -1644,7 +1652,7 @@ async function agendaGas(sem) {
   } catch {
     return [];
   }
-  return [oficial("EIA", fecha, 32, "Administración de Información Energética de EE. UU. (EIA)", URLG,
+  return [oficial("EIA", fecha, 20, "Administración de Información Energética de EE. UU. (EIA)", URLG,
     "Weekly Natural Gas Storage Report", "Inventarios de gas natural de EE. UU.",
     "El informe semanal de la EIA mueve el precio del gas, otro de los mercados energéticos que sigue Venezuela.")];
 }
@@ -1665,7 +1673,7 @@ async function agendaTesoro(sem) {
       if (!/^(Note|Bond)$/.test(x.securityType || "") || fecha < sem.lunes || fecha > fin) continue;
       const anios = Math.round(parseInt(String(x.securityTerm || "").match(/\d+/) || [0], 10) + (/Month/.test(x.securityTerm || "") ? 1 : 0));
       if (!anios || out.some((e) => e.fecha === fecha)) continue;
-      out.push(oficial("TESORO", fecha, anios >= 10 ? 38 : 33, "Departamento del Tesoro de EE. UU.",
+      out.push(oficial("TESORO", fecha, anios >= 10 ? 28 : 26, "Departamento del Tesoro de EE. UU.",
         "https://www.treasurydirect.gov/auctions/upcoming/", x.securityType + " " + x.securityTerm,
         "Subasta de deuda del Tesoro a " + anios + " años",
         "La demanda por deuda estadounidense mueve las tasas de referencia de los mercados emergentes."));
@@ -1718,6 +1726,106 @@ async function agendaCenso(sem) {
   } catch {
     return [];
   }
+}
+
+
+// EL CALENDARIO ECONÓMICO DE FOREXFACTORY (su exportación semanal en JSON). Es
+// un agregador, no una fuente oficial, pero trae lo que los calendarios
+// oficiales legibles no dan: la inflación y el empleo de EE. UU. (la web de la
+// BLS da 403 a la lectura automática), las reuniones de la OPEP+, los discursos
+// de Trump y las decisiones de otros bancos centrales, cada una con su impacto.
+// Solo publica la semana EN CURSO: sirve para la edición que se arma el lunes,
+// que es la de esa semana. Se queda solo con lo de impacto medio o alto, y cada
+// evento conocido trae su nombre y su texto en español; lo desconocido no entra.
+const FOREX = [
+  // [patrón del título, moneda (o null), prioridad, familia, nombre, por qué]
+  [/^(Federal Funds Rate|FOMC Statement)/, "USD", 100, "FED", "Reserva Federal decide tasas",
+   "La decisión sobre las tasas de interés de Estados Unidos mueve el dólar, el petróleo y el costo del financiamiento externo."],
+  [/OPEC/i, null, 85, "OPEP", "Reunión de la OPEP+",
+   "Sus decisiones sobre la producción mueven el precio del crudo, el principal ingreso de Venezuela."],
+  [/^(Core )?CPI m\/m/, "USD", 80, "DATOS_EEUU", "Inflación de Estados Unidos",
+   "El dato marca buena parte del rumbo de las tasas de la Reserva Federal y del valor del dólar."],
+  [/^Non-Farm Employment Change/, "USD", 80, "DATOS_EEUU", "Empleo en Estados Unidos",
+   "El informe de empleo es el dato que más mueve las expectativas sobre las tasas de la Reserva Federal."],
+  [/^Core PCE Price Index/, "USD", 62, "DATOS_EEUU", "Inflación PCE de Estados Unidos",
+   "Es el índice de precios que la Reserva Federal usa para medir la inflación."],
+  [/^(Advance|Prelim|Final) GDP/, "USD", 65, "DATOS_EEUU", "PIB de Estados Unidos",
+   "La estimación del crecimiento de la mayor economía del mundo, que marca la demanda de petróleo y el rumbo de las tasas."],
+  [/^(Core )?Retail Sales m\/m/, "USD", 50, "DATOS_EEUU", "Ventas minoristas de EE. UU.",
+   "Mide el consumo en Estados Unidos, una de las variables que sigue la Reserva Federal para decidir tasas."],
+  [/^(Core )?PPI m\/m/, "USD", 45, "DATOS_EEUU", "Precios al productor en EE. UU.",
+   "Anticipa la inflación que llegará al consumidor y las próximas decisiones de la Reserva Federal."],
+  [/^ISM (Manufacturing|Services) PMI/, "USD", 45, "DATOS_EEUU", "Índice ISM de EE. UU.",
+   "La encuesta a empresas adelanta si la economía estadounidense acelera o se frena."],
+  [/^Unemployment Claims/, "USD", 25, "DATOS_EEUU", "Solicitudes de desempleo en EE. UU.",
+   "El dato semanal de despidos que siguen los mercados para medir el empleo estadounidense."],
+  [/^Fed Chair .* (Speaks|Testifies)/, "USD", 60, "FED", "Habla el presidente de la Fed",
+   "Cualquier señal sobre las tasas de interés de Estados Unidos mueve el dólar y el precio del petróleo."],
+  [/^FOMC Meeting Minutes/, "USD", 70, "FED", "Actas de la Reserva Federal",
+   "Las minutas de su última reunión darán pistas sobre el rumbo de las tasas de interés en Estados Unidos."],
+  [/^President Trump Speaks/, "USD", 50, "CASA_BLANCA", "Habla Donald Trump",
+   "Sus anuncios sobre comercio, sanciones o petróleo pueden mover los mercados y la relación con Venezuela."],
+  [/^(Main Refinancing Rate|Monetary Policy Statement)/, "EUR", 45, "OTROS_BC", "El BCE decide tasas",
+   "La decisión del Banco Central Europeo mueve el euro frente al dólar y el apetito por riesgo global."],
+  [/^Official Bank Rate/, "GBP", 40, "OTROS_BC", "El Banco de Inglaterra decide tasas",
+   "Su decisión mueve la libra y se suma a las señales de los grandes bancos centrales."],
+  [/^BOJ Policy Rate/, "JPY", 40, "OTROS_BC", "El Banco de Japón decide tasas",
+   "Su decisión mueve el yen y los flujos de capital hacia los mercados emergentes."],
+  [/^(GDP q\/y|Industrial Production y\/y)/, "CNY", 45, "CHINA", "Datos de crecimiento de China",
+   "China es uno de los grandes compradores de petróleo: su crecimiento pesa en el precio del crudo."],
+];
+
+const URLX = "https://nfs.faireconomy.media/ff_calendar_thisweek.json";
+
+// LIMITA LAS PETICIONES: medido el 09/10/2026, tras unas pocas seguidas
+// contesta 429 durante minutos, y las IP de Cloudflare son compartidas. Así
+// que la última respuesta buena se guarda en KV (la refresca el cron de cada
+// tres horas) y la edición la usa si en ese momento no contesta.
+async function bajarForex(env) {
+  try {
+    const r = await fetch(URLX, { headers: BROWSER_UA });
+    if (!r.ok) return null;
+    const lista = await r.json();
+    if (Array.isArray(lista) && lista.length) await kvPut(env, "forex:semana", { ts: Date.now(), lista: lista });
+    return lista;
+  } catch {
+    return null;
+  }
+}
+
+async function agendaForex(env, sem) {
+  const fin = sumarDias(sem.lunes, 6);
+  try {
+    let lista = await bajarForex(env);
+    if (!lista) lista = ((await kvGet(env, "forex:semana", null)) || {}).lista || [];
+    const out = [];
+    for (const x of lista) {
+      if (!/^(High|Medium)$/.test(x.impact || "")) continue;
+      const fecha = String(x.date || "").slice(0, 10);
+      if (fecha < sem.lunes || fecha > fin) continue;
+      for (const [patron, moneda, prioridad, familia, nombre, porque] of FOREX) {
+        if (!patron.test(x.title || "") || (moneda && x.country !== moneda)) continue;
+        if (out.some((e) => e.nombre === nombre)) break;
+        const e = oficial("FOREX", fecha, prioridad, "Calendario económico (ForexFactory)", URLX,
+                          x.country + " " + x.title, nombre, porque);
+        e.familia = familia;
+        out.push(e);
+        break;
+      }
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+// La familia de cada candidato, para no repetir: como mucho uno de cada una
+// (dos de la prensa, que es lo venezolano). Pedido de Saúl el 09/10/2026: «no
+// es para poner eventos de EIA todas las semanas, tiene que ser variado».
+function familiaDe(c) {
+  if (c.familia) return c.familia;
+  return { FED: "FED", BEA: "DATOS_EEUU", CENSO: "DATOS_EEUU", EIA: "EIA", TESORO: "TESORO",
+           PRENSA: "PRENSA" }[c.origen] || c.origen;
 }
 
 // El calendario de la BEA (PIB, ingreso y gasto personal, comercio exterior de
@@ -1793,7 +1901,8 @@ function eventosVerificados(lineas, sem, candidatos) {
     // Lo de la prensa que pasa la verificación es de Venezuela, la OPEP+ o la
     // OFAC: va por delante de cualquier dato de Estados Unidos.
     out.push({ fecha: fecha, nombre: sinGuiones(p[2]), descripcion: sinGuiones(p.slice(3).join(" ")),
-               fuente: c.fuente || "", url: c.url || "", prioridad: c.origen === "PRENSA" ? 90 : c.prioridad || 0 });
+               fuente: c.fuente || "", url: c.url || "", prioridad: c.origen === "PRENSA" ? 90 : c.prioridad || 0,
+               familia: familiaDe(c) });
   }
   // Los oficiales que el modelo no tomó, con su texto propio. Luego se queda con
   // los tres más relevantes de todos: así un evento flojo elegido por el modelo
@@ -1802,10 +1911,25 @@ function eventosVerificados(lineas, sem, candidatos) {
     const c = candidatos[k];
     if (c.origen === "PRENSA" || usados.has(k) || out.some((e) => e.nombre === c.nombre)) continue;
     out.push({ fecha: c.fecha, nombre: c.nombre, descripcion: c.descripcion, fuente: c.fuente, url: c.url,
-               prioridad: c.prioridad || 0 });
+               prioridad: c.prioridad || 0, familia: familiaDe(c) });
   }
   out.sort((x, y) => y.prioridad - x.prioridad);
-  const elegidos = out.slice(0, 3).map(({ prioridad, ...e }) => e);
+  // VARIADA: como mucho uno por familia (dos de la prensa venezolana). Solo si
+  // con esa regla no se llega a tres se permite repetir familia.
+  const elegidos = [];
+  const usadas = {};
+  for (const e of out) {
+    if (elegidos.length >= 3) break;
+    const tope = e.familia === "PRENSA" ? 2 : 1;
+    if ((usadas[e.familia] || 0) >= tope) continue;
+    usadas[e.familia] = (usadas[e.familia] || 0) + 1;
+    elegidos.push(e);
+  }
+  for (const e of out) {
+    if (elegidos.length >= 3) break;
+    if (!elegidos.includes(e)) elegidos.push(e);
+  }
+  for (const e of elegidos) { delete e.prioridad; delete e.familia; }
   elegidos.sort((x, y) => (x.fecha < y.fecha ? -1 : 1));
   return elegidos;
 }
@@ -2004,7 +2128,7 @@ function parseSecciones(txt) {
 // --- Armado de la edición ---
 async function buildEntorno(env) {
   const sem = semanaEntorno(hoyVET());
-  const [datos, gVz, gLatam, gGlobal, tVz, tLatam, guardadas, gAgenda, fed, bea, eia, censo, gas, tesoro, ...gVzExtra] = await Promise.all([
+  const [datos, gVz, gLatam, gGlobal, tVz, tLatam, guardadas, gAgenda, fed, bea, eia, censo, gas, tesoro, forex, ...gVzExtra] = await Promise.all([
     gatherEntornoData(env, sem.corte),
     fetchNews(ENTORNO_Q_VZ, 12),
     fetchNews(ENTORNO_Q_LATAM, 12),
@@ -2019,6 +2143,7 @@ async function buildEntorno(env) {
     agendaCenso(sem),
     agendaGas(sem),
     agendaTesoro(sem),
+    agendaForex(env, sem),
     ...ENTORNO_Q_VZ_EXTRA.map((q) => fetchNews(q, 12)),
   ]);
   const curadas = filtrarNoticias(
@@ -2058,8 +2183,8 @@ async function buildEntorno(env) {
   const agenda = {};
   // Las referencias: F (Fed), B (BEA), E (EIA), C (Censo) y A (prensa). Los
   // oficiales van primero y por prioridad: es el orden en que el modelo los ve.
-  const oficiales = [].concat(fed, bea, eia, censo, gas, tesoro).sort((x, y) => y.prioridad - x.prioridad);
-  const letra = { FED: "F", BEA: "B", EIA: "E", CENSO: "C", TESORO: "T" };
+  const oficiales = [].concat(fed, bea, eia, censo, gas, tesoro, forex).sort((x, y) => y.prioridad - x.prioridad);
+  const letra = { FED: "F", BEA: "B", EIA: "E", CENSO: "C", TESORO: "T", FOREX: "X" };
   const cuenta = {};
   for (const e of oficiales) {
     const l = letra[e.origen];
