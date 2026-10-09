@@ -1512,32 +1512,206 @@ const MESES_EN = ["january", "february", "march", "april", "may", "june", "july"
   "september", "october", "november", "december"];
 const DIAS_SEMANA = ["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"];
 
+// LA AGENDA SALE TODAS LAS SEMANAS. Lo pidió Saúl el 09/10/2026, después de una
+// edición con la sección vacía: no había reunión de la Fed ni dato de la BEA esa
+// semana y ningún titular traía fecha comprobable. Ahora hay cuatro calendarios
+// oficiales leídos por código (Fed, EIA, Oficina del Censo y BEA), y la EIA
+// publica su informe semanal de inventarios TODAS las semanas, así que al
+// menos un evento hay siempre. Cada candidato oficial trae una prioridad (cuánto
+// puede mover la economía venezolana) y un texto propio: si el modelo no elige
+// tres que pasen la verificación, el código completa con los de mayor
+// prioridad. Las fechas nunca las pone el modelo.
+const DIAS_TXT = ["Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"];
+function fechaEvento(iso) {
+  const [a, m, d] = iso.split("-").map(Number);
+  return DIAS_TXT[new Date(iso + "T12:00:00Z").getUTCDay()] + " " + d + " de " + MESES_LARGOS[m - 1];
+}
+function oficial(origen, fecha, prioridad, fuente, url, texto, nombre, porque) {
+  return { origen: origen, fecha: fecha, prioridad: prioridad, fuente: fuente, url: url, texto: texto,
+           nombre: nombre, descripcion: fechaEvento(fecha) + ". " + porque };
+}
+
+// El calendario completo de la Reserva Federal, el que pinta su página de
+// eventos (www.federalreserve.gov/json/calendar.json). De todo lo que trae se
+// queda con lo que mueve mercados: reunión y actas del FOMC, Libro Beige,
+// comparecencias y discursos del presidente, y la producción industrial.
 async function agendaFed(sem) {
   const fin = sumarDias(sem.lunes, 6);
+  const URLF = "https://www.federalreserve.gov/newsevents/calendar.htm";
   try {
-    const r = await fetch("https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm", { headers: UA });
+    const r = await fetch("https://www.federalreserve.gov/json/calendar.json", { headers: UA });
     if (!r.ok) return [];
-    const html = await r.text();
-    const anio = sem.lunes.slice(0, 4);
-    const i = html.indexOf(anio + " FOMC Meetings");
-    if (i < 0) return [];
-    const j = html.indexOf("FOMC Meetings", i + 20);
-    const seg = html.slice(i, j > 0 ? j : undefined);
-    const re = /fomc-meeting__month[^>]*>\s*<strong>([^<]+)<\/strong>[\s\S]*?fomc-meeting__date[^>]*>\s*([^<]+)</g;
+    const j = JSON.parse((await r.text()).replace(/^﻿/, ""));
     const out = [];
+    for (const e of j.events || []) {
+      for (const d of String(e.days || "").split(",").map((x) => parseInt(x, 10)).filter(Boolean)) {
+        const fecha = String(e.month || "") + "-" + String(d).padStart(2, "0");
+        if (fecha < sem.lunes || fecha > fin) continue;
+        const t = String(e.title || "");
+        const presidente = /^(Speech|Discussion|Testimony)\s+-\s+Chair(man)?\s/i.test(t);
+        if (e.type === "FOMC" && /FOMC Meeting/i.test(t)) {
+          out.push(oficial("FED", fecha, 100, "Reserva Federal", URLF, t, "Reserva Federal decide tasas",
+            "La decisión sobre las tasas de interés de Estados Unidos mueve el dólar, el petróleo y el costo del financiamiento externo."));
+        } else if (e.type === "FOMC" && /Minutes/i.test(t)) {
+          out.push(oficial("FED", fecha, 70, "Reserva Federal", URLF, t, "Actas de la Reserva Federal",
+            "Las minutas de su última reunión darán pistas sobre el rumbo de las tasas de interés en Estados Unidos."));
+        } else if (e.type === "Beige") {
+          out.push(oficial("FED", fecha, 55, "Reserva Federal", URLF, t, "Libro Beige de la Reserva Federal",
+            "El informe regional muestra cómo va la actividad económica en Estados Unidos y anticipa el rumbo de las tasas."));
+        } else if (presidente && /Testimony/i.test(t)) {
+          out.push(oficial("FED", fecha, 75, "Reserva Federal", URLF, t, "Presidente de la Fed ante el Congreso",
+            "Su comparecencia puede adelantar decisiones sobre tasas que mueven el dólar y el petróleo."));
+        } else if (presidente) {
+          out.push(oficial("FED", fecha, 60, "Reserva Federal", URLF, t, "Habla el presidente de la Fed",
+            "Cualquier señal sobre las tasas de interés de Estados Unidos mueve el dólar y el precio del petróleo."));
+        } else if (/^G\.17/.test(t)) {
+          out.push(oficial("FED", fecha, 40, "Reserva Federal", URLF, t, "Producción industrial de EE. UU.",
+            "El dato de la Reserva Federal mide la actividad de la industria estadounidense y su demanda de energía."));
+        }
+      }
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+// El informe semanal de inventarios de petróleo de la EIA. La propia página lo
+// dice: sale los miércoles a las 10:30, salvo las excepciones por feriado de su
+// tabla («datos de la semana que termina el…» → «fecha alternativa»). El de la
+// semana del lunes L es el de los datos que terminan el viernes L-3.
+async function agendaEia(sem) {
+  const URLE = "https://www.eia.gov/petroleum/supply/weekly/schedule.php";
+  let fecha = sumarDias(sem.lunes, 2);
+  try {
+    const r = await fetch(URLE, { headers: UA });
+    if (r.ok) {
+      const t = (await r.text()).replace(/<[^>]+>/g, " | ").replace(/\s+/g, " ");
+      if (!/standard release time and day of the week will be at 10:30 a\.m\. eastern time on Wednesday/i.test(t)) return [];
+      const viernes = sumarDias(sem.lunes, -3);
+      const re = /([A-Z][a-z]+) (\d{1,2}), (\d{4}) \| \| ([A-Z][a-z]+) (\d{1,2}), (\d{4})/g;
+      let m;
+      const iso = (mes, d, a) => a + "-" + String(MESES_EN.indexOf(mes.toLowerCase()) + 1).padStart(2, "0") + "-" + String(d).padStart(2, "0");
+      while ((m = re.exec(t)) !== null) {
+        if (iso(m[1], m[2], m[3]) === viernes) fecha = iso(m[4], m[5], m[6]);
+      }
+    } else return [];
+  } catch {
+    return [];
+  }
+  const out = [oficial("EIA", fecha, 58, "Administración de Información Energética de EE. UU. (EIA)", URLE,
+    "Weekly Petroleum Status Report", "Inventarios de crudo de EE. UU.",
+    "El informe semanal de la EIA mueve el precio del petróleo, del que dependen los ingresos de Venezuela.")];
+  // Y el informe mensual de perspectivas (STEO), con la proyección del precio
+  // del petróleo. Su página dice en texto la próxima fecha de publicación.
+  try {
+    const URLS = "https://www.eia.gov/outlooks/steo/release_schedule.php";
+    const r = await fetch(URLS, { headers: UA });
+    if (r.ok) {
+      const t = (await r.text()).replace(/<[^>]+>/g, " | ").replace(/\s+/g, " ");
+      const m = t.match(/Next Release Date:\s*\|[\s|]*([A-Z][a-z]+) (\d{1,2}), (\d{4})/);
+      if (m) {
+        const f = m[3] + "-" + String(MESES_EN.indexOf(m[1].toLowerCase()) + 1).padStart(2, "0") + "-" + String(m[2]).padStart(2, "0");
+        if (f >= sem.lunes && f <= sumarDias(sem.lunes, 6)) {
+          out.push(oficial("EIA", f, 52, "Administración de Información Energética de EE. UU. (EIA)", URLS,
+            "Short-Term Energy Outlook", "Perspectivas de energía de la EIA",
+            "El informe mensual actualiza la proyección del precio del petróleo, clave para los ingresos venezolanos."));
+        }
+      }
+    }
+  } catch {}
+  return out;
+}
+
+// El informe semanal de inventarios de gas natural de la EIA: los jueves a las
+// 10:30, salvo las fechas alternativas de su tabla de feriados (lo dice la
+// propia página). Segundo informe que sale TODAS las semanas.
+async function agendaGas(sem) {
+  const URLG = "https://ir.eia.gov/ngs/schedule.html";
+  const fin = sumarDias(sem.lunes, 6);
+  let fecha = sumarDias(sem.lunes, 3);
+  try {
+    const r = await fetch(URLG, { headers: UA });
+    if (!r.ok) return [];
+    const t = (await r.text()).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+    if (!/standard release time and day of the week will be at 10:30 a\.m\. eastern time on Thursdays/i.test(t)) return [];
+    const re = /([A-Z][a-z]+) (\d{1,2}), (\d{4})[^A-Za-z]{0,30}(?:\(Updated\))?\s*(Monday|Tuesday|Wednesday|Thursday|Friday)/g;
     let m;
-    while ((m = re.exec(seg)) !== null) {
-      // «April/May» y «30-1» cruzan de mes: la decisión es el último día.
-      const meses = m[1].toLowerCase().split("/");
-      const dias = (m[2].match(/\d+/g) || []).map(Number);
-      if (!dias.length) continue;
-      const mes = MESES_EN.indexOf(meses[meses.length - 1].trim()) + 1;
-      if (mes < 1) continue;
-      const fecha = anio + "-" + String(mes).padStart(2, "0") + "-" + String(dias[dias.length - 1]).padStart(2, "0");
-      if (fecha >= sem.lunes && fecha <= fin) {
-        out.push({ origen: "FED", fecha: fecha, fuente: "Reserva Federal",
-                   url: "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
-                   texto: "Reunión de política monetaria de la Reserva Federal (FOMC), " + m[1] + " " + m[2].trim() });
+    while ((m = re.exec(t)) !== null) {
+      const f = m[3] + "-" + String(MESES_EN.indexOf(m[1].toLowerCase()) + 1).padStart(2, "0") + "-" + String(m[2]).padStart(2, "0");
+      if (f >= sem.lunes && f <= fin) fecha = f;
+    }
+  } catch {
+    return [];
+  }
+  return [oficial("EIA", fecha, 32, "Administración de Información Energética de EE. UU. (EIA)", URLG,
+    "Weekly Natural Gas Storage Report", "Inventarios de gas natural de EE. UU.",
+    "El informe semanal de la EIA mueve el precio del gas, otro de los mercados energéticos que sigue Venezuela.")];
+}
+
+// Las subastas de notas y bonos del Tesoro de EE. UU. de las próximas semanas
+// (TreasuryDirect publica las que vienen en JSON). Las letras de corto plazo no
+// entran: se subastan a diario y no mueven nada.
+async function agendaTesoro(sem) {
+  const fin = sumarDias(sem.lunes, 6);
+  const URLT = "https://www.treasurydirect.gov/TA_WS/securities/upcoming?format=json";
+  try {
+    const r = await fetch(URLT, { headers: UA });
+    if (!r.ok) return [];
+    const lista = (await r.json()) || [];
+    const out = [];
+    for (const x of lista) {
+      const fecha = String(x.auctionDate || "").slice(0, 10);
+      if (!/^(Note|Bond)$/.test(x.securityType || "") || fecha < sem.lunes || fecha > fin) continue;
+      const anios = Math.round(parseInt(String(x.securityTerm || "").match(/\d+/) || [0], 10) + (/Month/.test(x.securityTerm || "") ? 1 : 0));
+      if (!anios || out.some((e) => e.fecha === fecha)) continue;
+      out.push(oficial("TESORO", fecha, anios >= 10 ? 38 : 33, "Departamento del Tesoro de EE. UU.",
+        "https://www.treasurydirect.gov/auctions/upcoming/", x.securityType + " " + x.securityTerm,
+        "Subasta de deuda del Tesoro a " + anios + " años",
+        "La demanda por deuda estadounidense mueve las tasas de referencia de los mercados emergentes."));
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+// El calendario de indicadores de la Oficina del Censo. Cada fila trae el nombre
+// del indicador y un código con la fecha y la hora (A202610150830).
+const CENSO = [
+  [/Advance Monthly Sales for Retail/i, 50, "Ventas minoristas de EE. UU.",
+   "Mide el consumo en Estados Unidos, una de las variables que sigue la Reserva Federal para decidir tasas."],
+  [/Advance Report on Durable Goods/i, 45, "Pedidos de bienes duraderos en EE. UU.",
+   "Anticipa la inversión de las empresas estadounidenses y la fortaleza de su industria."],
+  [/New Residential Construction/i, 35, "Construcción de viviendas en EE. UU.",
+   "Los permisos e inicios de obra muestran cómo responde la economía estadounidense a las tasas de interés."],
+  [/Advance Economic Indicators/i, 34, "Indicadores adelantados de EE. UU.",
+   "Adelanta el comercio de bienes y los inventarios de Estados Unidos, incluidas sus compras de petróleo."],
+  [/New Residential Sales/i, 30, "Venta de viviendas nuevas en EE. UU.",
+   "Mide el pulso del sector inmobiliario estadounidense, sensible a las tasas de la Reserva Federal."],
+  [/Manufacturers' Shipments, Inventories and Orders/i, 28, "Pedidos a fábricas en EE. UU.",
+   "El informe completo de la industria estadounidense, que sigue la Reserva Federal."],
+];
+// OJO: calendar-listview.html trae el calendario del AÑO QUE VIENE (medido el
+// 09/10/2026: solo filas de 2027). El del año en curso es calendar-listview-AAAA.
+async function agendaCenso(sem) {
+  const fin = sumarDias(sem.lunes, 6);
+  const URLC = "https://www.census.gov/economic-indicators/calendar-listview-" + sem.lunes.slice(0, 4) + ".html";
+  try {
+    const r = await fetch(URLC, { headers: UA });
+    if (!r.ok) return [];
+    const t = await r.text();
+    const out = [];
+    // <a href="/retail">Advance Monthly Sales…</a></td><td sorttable_customkey="202610150830">
+    const re = />([^<]{8,140})<\/a><\/td>\s*<td sorttable_customkey="(\d{4})(\d{2})(\d{2})\d{4}"/g;
+    let m;
+    while ((m = re.exec(t)) !== null) {
+      const fecha = m[2] + "-" + m[3] + "-" + m[4];
+      if (fecha < sem.lunes || fecha > fin) continue;
+      for (const [patron, prioridad, nombre, porque] of CENSO) {
+        if (patron.test(m[1]) && !out.some((e) => e.nombre === nombre)) {
+          out.push(oficial("CENSO", fecha, prioridad, "Oficina del Censo de EE. UU.", URLC, m[1].trim(), nombre, porque));
+        }
       }
     }
     return out;
@@ -1564,8 +1738,15 @@ async function agendaBea(sem) {
       if (mes < 1) continue;
       const fecha = sem.lunes.slice(0, 4) + "-" + String(mes).padStart(2, "0") + "-" + String(m[2]).padStart(2, "0");
       if (fecha >= sem.lunes && fecha <= fin) {
-        out.push({ origen: "BEA", fecha: fecha, fuente: "Oficina de Análisis Económico de EE. UU. (BEA)",
-                   url: "https://www.bea.gov/news/schedule", texto: "La BEA publica " + m[3] + " (" + m[1] + " " + m[2] + ")" });
+        const URLB = "https://www.bea.gov/news/schedule";
+        const BEA = [[/^GDP/i, 65, "PIB de Estados Unidos", "La estimación del crecimiento de la mayor economía del mundo, que marca la demanda de petróleo y el rumbo de las tasas."],
+                     [/Personal Income and Outlays/i, 62, "Ingreso y gasto personal en EE. UU.", "Incluye el índice de precios que la Reserva Federal usa para medir la inflación."],
+                     [/International Trade in Goods and Services/i, 40, "Comercio exterior de EE. UU.", "Mide las importaciones estadounidenses, incluidas las de petróleo."]];
+        for (const [patron, prioridad, nombre, porque] of BEA) {
+          if (patron.test(m[3]) && !out.some((e) => e.nombre === nombre)) {
+            out.push(oficial("BEA", fecha, prioridad, "Oficina de Análisis Económico de EE. UU. (BEA)", URLB, m[3], nombre, porque));
+          }
+        }
       }
     }
     return out;
@@ -1586,31 +1767,47 @@ function verificarEvento(fecha, texto) {
 }
 
 // Los eventos que el modelo propuso, filtrados: dentro de la semana que empieza,
-// con fuente de la lista y con la fecha confirmada. Máximo tres, por fecha.
+// con fuente de la lista y con la fecha confirmada. Si no llegan a tres, se
+// completa con los oficiales de mayor prioridad que no estén ya (con su texto
+// propio). Máximo tres, ordenados por fecha.
 function eventosVerificados(lineas, sem, candidatos) {
   const fin = sumarDias(sem.lunes, 6);
   const out = [];
+  const usados = new Set();
   for (const l of lineas) {
     const p = l.split("|").map((x) => x.trim());
     if (p.length < 4) continue;
     const ref = p[0].toUpperCase().replace(/[^A-Z0-9]/g, "");
     const fecha = (p[1].match(/\d{4}-\d{2}-\d{2}/) || [""])[0];
     const c = candidatos[ref];
-    if (!c || !fecha || fecha < sem.lunes || fecha > fin) {
-      console.log("[entorno] evento descartado (fuera de la semana o sin fuente): " + l.slice(0, 120));
+    if (!c || !fecha || fecha < sem.lunes || fecha > fin || usados.has(ref)) {
+      console.log("[entorno] evento descartado (fuera de la semana, sin fuente o repetido): " + l.slice(0, 120));
       continue;
     }
-    const ok = c.origen === "FED" || c.origen === "BEA" ? c.fecha === fecha : verificarEvento(fecha, c.texto);
+    const ok = c.origen === "PRENSA" ? verificarEvento(fecha, c.texto) : c.fecha === fecha;
     if (!ok) {
       console.log("[entorno] evento descartado (la fuente no dice esa fecha): " + l.slice(0, 120));
       continue;
     }
-    if (out.some((e) => e.nombre === p[2])) continue;
+    usados.add(ref);
+    // Lo de la prensa que pasa la verificación es de Venezuela, la OPEP+ o la
+    // OFAC: va por delante de cualquier dato de Estados Unidos.
     out.push({ fecha: fecha, nombre: sinGuiones(p[2]), descripcion: sinGuiones(p.slice(3).join(" ")),
-               fuente: c.fuente || "", url: c.url || "" });
+               fuente: c.fuente || "", url: c.url || "", prioridad: c.origen === "PRENSA" ? 90 : c.prioridad || 0 });
   }
-  out.sort((x, y) => (x.fecha < y.fecha ? -1 : 1));
-  return out.slice(0, 3);
+  // Los oficiales que el modelo no tomó, con su texto propio. Luego se queda con
+  // los tres más relevantes de todos: así un evento flojo elegido por el modelo
+  // (el gas, el 09/10/2026) no deja fuera uno fuerte (el Libro Beige).
+  for (const k of Object.keys(candidatos)) {
+    const c = candidatos[k];
+    if (c.origen === "PRENSA" || usados.has(k) || out.some((e) => e.nombre === c.nombre)) continue;
+    out.push({ fecha: c.fecha, nombre: c.nombre, descripcion: c.descripcion, fuente: c.fuente, url: c.url,
+               prioridad: c.prioridad || 0 });
+  }
+  out.sort((x, y) => y.prioridad - x.prioridad);
+  const elegidos = out.slice(0, 3).map(({ prioridad, ...e }) => e);
+  elegidos.sort((x, y) => (x.fecha < y.fecha ? -1 : 1));
+  return elegidos;
 }
 
 // EL PROMPT SIGUE LA GUÍA MAESTRA DE CONTENIDO (equipo de comunicación, 7 de
@@ -1634,7 +1831,8 @@ function promptEntorno(d, noticias, sem, agenda) {
     })
     .join("\n");
   const listaAgenda = Object.keys(agenda)
-    .map((k) => k + ". " + agenda[k].texto + (agenda[k].fuente ? " (" + agenda[k].fuente + ")" : ""))
+    .map((k) => k + ". " + (agenda[k].fecha ? "[" + agenda[k].fecha + "] " : "") + agenda[k].texto +
+      (agenda[k].fuente ? " (" + agenda[k].fuente + ")" : ""))
     .join("\n");
   return (
     "Eres el editor de ENTORNO EN VIÑETAS, el boletín semanal de SurEconomics: las noticias " +
@@ -1700,8 +1898,12 @@ function promptEntorno(d, noticias, sem, agenda) {
     "palabras que empieza por la fecha escrita y dice por qué importa\n" +
     "(ejemplo: A3 | 2026-11-06 | BCV publica inflación de octubre | Viernes 6 de noviembre. " +
     "Dirá si la inflación mensual sigue en un dígito por tercer mes.)\n" +
-    "Si la lista no trae tres eventos con fecha confirmada en esa semana, pon solo los que " +
-    "haya. NUNCA inventes un evento ni una fecha.\n" +
+    "Las referencias F, B, E, C y T son calendarios oficiales (Reserva Federal, BEA, EIA, " +
+    "Oficina del Censo y Tesoro de EE. UU.) y van ordenadas de más a menos relevantes; las A " +
+    "son de la prensa. Elige los tres que más puedan mover la economía venezolana: un evento " +
+    "de Venezuela, de la OPEP+ o de la OFAC con fecha confirmada va por delante de un dato de " +
+    "Estados Unidos. Escribe el nombre en español. Si no hay tres, pon los que haya: el sistema " +
+    "completa con los oficiales. NUNCA inventes un evento ni una fecha.\n" +
     "###ESCENARIO\n" +
     "¿Qué podría pasar?: escenario sobre la NOTICIA1 para las próximas semanas, en 2 párrafos " +
     "y máximo 120 palabras. Es la única sección que especula, y lo hace con condiciones " +
@@ -1802,7 +2004,7 @@ function parseSecciones(txt) {
 // --- Armado de la edición ---
 async function buildEntorno(env) {
   const sem = semanaEntorno(hoyVET());
-  const [datos, gVz, gLatam, gGlobal, tVz, tLatam, guardadas, gAgenda, fed, bea, ...gVzExtra] = await Promise.all([
+  const [datos, gVz, gLatam, gGlobal, tVz, tLatam, guardadas, gAgenda, fed, bea, eia, censo, gas, tesoro, ...gVzExtra] = await Promise.all([
     gatherEntornoData(env, sem.corte),
     fetchNews(ENTORNO_Q_VZ, 12),
     fetchNews(ENTORNO_Q_LATAM, 12),
@@ -1813,6 +2015,10 @@ async function buildEntorno(env) {
     fetchNews(ENTORNO_Q_AGENDA, 15),
     agendaFed(sem),
     agendaBea(sem),
+    agendaEia(sem),
+    agendaCenso(sem),
+    agendaGas(sem),
+    agendaTesoro(sem),
     ...ENTORNO_Q_VZ_EXTRA.map((q) => fetchNews(q, 12)),
   ]);
   const curadas = filtrarNoticias(
@@ -1850,8 +2056,16 @@ async function buildEntorno(env) {
 
   // La agenda: F1.. de la Reserva Federal, A1.. de la prensa (ver agendaFed).
   const agenda = {};
-  fed.forEach((e, i) => { agenda["F" + (i + 1)] = e; });
-  bea.forEach((e, i) => { agenda["B" + (i + 1)] = e; });
+  // Las referencias: F (Fed), B (BEA), E (EIA), C (Censo) y A (prensa). Los
+  // oficiales van primero y por prioridad: es el orden en que el modelo los ve.
+  const oficiales = [].concat(fed, bea, eia, censo, gas, tesoro).sort((x, y) => y.prioridad - x.prioridad);
+  const letra = { FED: "F", BEA: "B", EIA: "E", CENSO: "C", TESORO: "T" };
+  const cuenta = {};
+  for (const e of oficiales) {
+    const l = letra[e.origen];
+    cuenta[l] = (cuenta[l] || 0) + 1;
+    agenda[l + cuenta[l]] = e;
+  }
   filtrarNoticias(gAgenda, false).slice(0, 15).forEach((n, i) => {
     agenda["A" + (i + 1)] = { origen: "PRENSA", texto: sinMedio(n.t) + (resumenUtil(n) ? ". " + resumenUtil(n) : ""),
                               fuente: medioDe(n.t), url: n.l || "" };

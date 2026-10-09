@@ -158,15 +158,31 @@ cambia.** Para ver qué cambió: leer el diseño por la API, exportar a
 | Dolarización informal con estudio citado | **oculta** hasta que el equipo pase un estudio (decisión de Saúl) |
 | Merey 16 | **pendiente**: no hay fuente gratuita diaria conocida; la línea sale sola si `mercados.merey` existe |
 
-**La agenda («¿Qué estamos esperando?») no la fecha el modelo.** Saúl pidió que
-el bot busque los eventos; las fechas se comprueban por código:
-- `agendaFed()` lee el calendario de reuniones de la Reserva Federal;
-- `agendaBea()` lee el calendario de la BEA (PIB, ingreso y gasto, comercio);
-- de la prensa (`ENTORNO_Q_AGENDA`) solo pasa un evento si el titular o su
-  resumen dicen esa fecha (`verificarEvento`).
-Si no hay tres, salen los que haya y el chequeo lo dice. La inflación y el
-empleo de EE. UU. (BLS) no se pueden leer: la página da 403. FRED los da con
-una clave gratuita que aún no existe.
+**La agenda («¿Qué estamos esperando?») sale TODAS las semanas y no la fecha el
+modelo.** Saúl lo exigió el 09/10/2026, tras una prueba con la sección vacía.
+Las fechas salen de calendarios oficiales leídos por código, cada candidato con
+una prioridad (cuánto puede mover a Venezuela) y un texto propio:
+
+| Fuente | Qué da | Función |
+|---|---|---|
+| Reserva Federal, `json/calendar.json` (el que pinta su página) | reunión y actas del FOMC, Libro Beige, discursos y comparecencias del presidente, producción industrial | `agendaFed` |
+| EIA | inventarios de crudo (**todos los miércoles**, salvo su tabla de feriados) y la STEO mensual | `agendaEia` |
+| EIA | inventarios de gas (**todos los jueves**, salvo feriados) | `agendaGas` |
+| BEA | PIB, ingreso y gasto (PCE), comercio exterior | `agendaBea` |
+| Oficina del Censo, `calendar-listview-AAAA.html` | ventas minoristas, bienes duraderos, vivienda | `agendaCenso` |
+| TreasuryDirect (JSON) | subastas de notas y bonos | `agendaTesoro` |
+| Prensa (`ENTORNO_Q_AGENDA`) | BCV, OPEP+, OFAC… solo si el titular dice la fecha (`verificarEvento`) | — |
+
+El modelo ve los candidatos con su fecha y elige; `eventosVerificados()` tira lo
+que no cuadre con la fuente, **ordena todo por prioridad y se queda con tres**
+(lo de la prensa venezolana va primero), completando con los textos propios de
+los oficiales. Con crudo y gas semanales el piso es de dos eventos; probado de
+octubre a diciembre de 2026, las doce semanas salen con tres.
+
+**Trampas:** `calendar-listview.html` del Censo trae el año QUE VIENE (el
+corriente es `calendar-listview-AAAA.html`); la página de eventos de la Fed se
+pinta con JavaScript (el dato está en `json/calendar.json`); BLS, OPEP y Baker
+Hughes dan 403 a la lectura automática.
 
 ### El chequeo antes de subir
 
