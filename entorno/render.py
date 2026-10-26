@@ -400,9 +400,13 @@ def repartir_fotos(ed, notas, latam, dest):
 
 
 def lunes_objetivo(hoy):
-    """El lunes en que sale la edicion: hoy si es lunes, si no el proximo."""
+    """El lunes de la edicion que toca: de lunes a viernes, el de ESTA semana;
+    sabado y domingo, el que viene (el equipo la prepara el fin de semana).
+    Igual que semanaEntorno() en el Worker; cambio del 25/10/2026."""
     from datetime import timedelta
-    return hoy + timedelta(days=(7 - hoy.weekday()) % 7)
+    if hoy.weekday() >= 5:
+        return hoy + timedelta(days=7 - hoy.weekday())
+    return hoy - timedelta(days=hoy.weekday())
 
 
 def semana_cubierta(hoy):

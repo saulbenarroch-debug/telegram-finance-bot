@@ -372,7 +372,9 @@ export default {
     if (event.cron === DIARIO_CRON) {
       ctx.waitUntil(dispararTanda(env, event.scheduledTime));
     } else if (event.cron === ENTORNO_CRON) {
-      ctx.waitUntil(getEntorno(env, true));
+      // Sin forzar: si el equipo ya la armó el fin de semana, se respeta esa
+      // (es la que vio y quizá ya subió al boletín). Solo arma si no la hay.
+      ctx.waitUntil(getEntorno(env, false));
     } else if (event.cron === VIGILANCIA_CRON) {
       // Solo dispara el workflow y se va: la ronda entera corre en Actions, que
       // no tiene el limite de ~30 s de ctx.waitUntil() que se llevo por delante
@@ -938,14 +940,21 @@ function fechaLarga(iso) {
 // semana_cubierta): sale el lunes y cubre la semana ANTERIOR, de lunes a
 // domingo (guía maestra de octubre de 2026; decisión de Saúl el 08/10/2026).
 // Los datos de mercado tienen UNA sola fecha de corte: el cierre del viernes
-// anterior al envío. Un pedido a mitad de semana arma la edición del lunes que
-// viene, con la semana en curso.
+// anterior al envío.
+//
+// QUÉ LUNES TOCA SEGÚN EL DÍA (25/10/2026). De lunes a viernes, la edición
+// vigente es la del lunes de ESTA semana; el sábado y el domingo ya es la del
+// lunes que viene, porque el equipo la prepara el fin de semana y el viernes ya
+// cerró el mercado. Antes un pedido de martes armaba la del lunes siguiente con
+// la semana a medias, y uno de domingo recibía de la caché la del lunes pasado:
+// una compañera la armó un domingo y le salió la semana anterior.
 function sumarDias(iso, n) {
   return new Date(Date.parse(iso.slice(0, 10) + "T12:00:00Z") + n * 86400000).toISOString().slice(0, 10);
 }
 function semanaEntorno(hoyIso) {
   const dia = new Date(hoyIso.slice(0, 10) + "T12:00:00Z").getUTCDay(); // 0 domingo
-  const lunes = sumarDias(hoyIso, (8 - dia) % 7);
+  const lunes = dia === 6 ? sumarDias(hoyIso, 2) : dia === 0 ? sumarDias(hoyIso, 1)
+              : sumarDias(hoyIso, 1 - dia);
   return { lunes: lunes, desde: sumarDias(lunes, -7), hasta: sumarDias(lunes, -1), corte: sumarDias(lunes, -3) };
 }
 // «del 5 al 11 de octubre de 2026», sin guiones.
@@ -2390,10 +2399,19 @@ async function ogImagen(url) {
   return "";
 }
 
-// Caché de 6 h: dos pedidos seguidos no queman cuota de IA ni cambian el texto.
+// LA EDICIÓN GUARDADA VALE SI ES LA DEL LUNES QUE TOCA, no por su edad. Con
+// solo el TTL de una semana, la del lunes 19/10 se seguía sirviendo el domingo
+// 25, cuando ya tocaba la del 26. Las ediciones viejas sin `semana` se juzgan
+// por el TTL, como antes.
+function entornoVigente(ed) {
+  if (!ed || !ed.parts) return false;
+  if (ed.semana && ed.semana.lunes) return ed.semana.lunes === semanaEntorno(hoyVET()).lunes;
+  return Date.now() - ed.ts < ENTORNO_TTL * 1000;
+}
+
 async function getEntorno(env, force) {
   const cache = await kvGet(env, "entorno:last", null);
-  if (!force && cache && cache.parts && Date.now() - cache.ts < ENTORNO_TTL * 1000) {
+  if (!force && entornoVigente(cache)) {
     return cache;
   }
   try {
@@ -2418,8 +2436,7 @@ async function enviarEntorno(env, chatId, force) {
   // de devolver, así que volver a pedirla la sirve al instante. Por eso el
   // aviso dice justo eso en vez de dejar a la persona mirando el chat.
   const enCache = await kvGet(env, "entorno:last", null);
-  const fria = force || !enCache || !enCache.parts ||
-    Date.now() - enCache.ts >= ENTORNO_TTL * 1000;
+  const fria = force || !entornoVigente(enCache);
 
   // EN FRÍO YA NO SE ARMA AQUÍ, Y ESTO CAMBIÓ CON LA PLANTILLA DE CUATRO
   // NOTICIAS (24/09/2026). Con una noticia, armarla tardaba 26 s y cabía justo

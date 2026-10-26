@@ -148,7 +148,7 @@ cambia.** Para ver qué cambió: leer el diseño por la API, exportar a
 
 | Regla de la guía | Dónde |
 |---|---|
-| Sale el lunes y cubre la semana anterior, de lunes a domingo | `semanaEntorno()` (Worker) y `semana_cubierta()` (render) |
+| Sale el lunes y cubre la semana anterior, de lunes a domingo | `semanaEntorno()` (Worker) y `semana_cubierta()` (render). **De lunes a viernes toca la edición de ESTE lunes; sábado y domingo, la del que viene** (se prepara el fin de semana) |
 | Portada: «Edición N.º 3 · Lunes 12 de octubre de 2026», **sin la semana** (Saúl, 09/10/2026) | `fecha_de_salida()` en render |
 | Edición N.º correlativa | `numero_de_edicion()`: números del boletín **enviados** antes de ese lunes, más uno (decisión de Saúl). Sin panel, ancla N.º 3 = 12/10/2026 |
 | Una sola fecha de corte: el cierre del viernes | `gatherEntornoData(env, corte)`: mercados, tasas e IBC a esa fecha |
@@ -197,6 +197,12 @@ esa semana; si se arma otro día, la agenda vive de los calendarios oficiales.
 corriente es `calendar-listview-AAAA.html`); la página de eventos de la Fed se
 pinta con JavaScript (el dato está en `json/calendar.json`); BLS, OPEP y Baker
 Hughes dan 403 a la lectura automática.
+
+**La edición guardada vale si es la del lunes que toca, no por su edad**
+(`entornoVigente`). Hasta el 25/10/2026 valía una semana desde que se armó: la
+del lunes 19 se seguía sirviendo el domingo 25 y a una compañera le salió la
+semana anterior. Y el cron del lunes ya **no fuerza**: si el equipo la armó el
+fin de semana, respeta esa (es la que vio y quizá subió al boletín).
 
 ### El chequeo antes de subir
 
