@@ -115,9 +115,21 @@ def bajar_foto(url, dest, nombre):
     if not url:
         return None
     try:
-        req = urllib.request.Request(url, headers=NAV_UA)
-        with urllib.request.urlopen(req, timeout=60) as r:
-            datos = r.read()
+        try:
+            req = urllib.request.Request(url, headers=NAV_UA)
+            with urllib.request.urlopen(req, timeout=60) as r:
+                datos = r.read()
+        except Exception as e:
+            # SEGUNDO INTENTO, DESDE CLOUDFLARE. Hay medios que bloquean las IP
+            # de GitHub Actions y no las de Cloudflare: el 09/11/2026 la foto de
+            # TalCual dio 403 en Actions y desde casa bajaba bien. El Worker la
+            # baja por nosotros (/foto, con la misma clave que la edición).
+            print(f"     {nombre}: {e}; pruebo a través del Worker")
+            from urllib.parse import quote  # no «import urllib.parse»: haría local a urllib
+            via = f"{WORKER}/foto?key={leer_secreto()}&url=" + quote(url, safe="")
+            with urllib.request.urlopen(urllib.request.Request(
+                    via, headers={"User-Agent": "EntornoRender/2.0"}), timeout=60) as r:
+                datos = r.read()
         if len(datos) < 4000:
             return None
         # Chrome reconoce el formato por el contenido, no por la extension; la
@@ -323,14 +335,26 @@ def foto_wikidata(nombre):
         if not q.get("search"):
             return "", ""
         qid = q["search"][0]["id"]
+        # LA IMAGEN, Y SI NO HAY, EL LOGO O EL SELLO. Muchas instituciones no
+        # tienen foto en Wikidata: el 09/11/2026 el protagonista fue la OFAC y la
+        # polaroid de la portada salió en blanco. Su sello (P158) o su logo (P154)
+        # siguen diciendo «quién», que es lo que la guía pide a ese hueco.
         e = json.loads(urllib.request.urlopen(urllib.request.Request(
-            api + urllib.parse.urlencode({"action": "wbgetclaims", "entity": qid, "property": "P18",
-                                          "format": "json"}),
+            api + urllib.parse.urlencode({"action": "wbgetentities", "ids": qid,
+                                          "props": "claims", "format": "json"}),
             headers={"User-Agent": "EntornoRender/3.0 (sureconomics.com)"}), timeout=20).read())
-        p18 = (e.get("claims") or {}).get("P18") or []
-        if not p18:
+        claims = (e.get("entities", {}).get(qid) or {}).get("claims") or {}
+        archivo = ""
+        for prop in ("P18", "P158", "P154"):
+            for c in claims.get(prop) or []:
+                v = (c.get("mainsnak") or {}).get("datavalue", {}).get("value")
+                if v:
+                    archivo = v
+                    break
+            if archivo:
+                break
+        if not archivo:
             return "", ""
-        archivo = p18[0]["mainsnak"]["datavalue"]["value"]
         info = json.loads(urllib.request.urlopen(urllib.request.Request(
             "https://commons.wikimedia.org/w/api.php?" + urllib.parse.urlencode({
                 "action": "query", "titles": "File:" + archivo, "prop": "imageinfo",
@@ -380,17 +404,35 @@ def repartir_fotos(ed, notas, latam, dest):
             fotos[clave] = (p, credito)
         return p
 
+    def de_wikidata(clave, nombres):
+        """Prueba las entidades EN ORDEN hasta que una dé foto no repetida.
+        Todas son de la misma noticia: es respaldo, no foto prestada."""
+        for nombre in nombres:
+            url, cred = foto_wikidata(nombre)
+            if url and tomar(clave, url, cred):
+                return True
+        return False
+
     for k, n in enumerate(notas):
-        tomar("n%d" % (k + 1), n.get("imagen"), n.get("credito") or credito_de_url(n.get("url"), n.get("medio")))
+        clave = "n%d" % (k + 1)
+        if not tomar(clave, n.get("imagen"), n.get("credito") or credito_de_url(n.get("url"), n.get("medio"))):
+            # RESPALDO DE LA VIÑETA: el protagonista o el lugar de SU noticia.
+            # El 09/11/2026 la viñeta 2 no tenía imagen en el artículo y salió
+            # con el mapa; desde entonces el modelo nombra las dos entidades en
+            # las cuatro noticias, no solo en la primera.
+            if de_wikidata(clave, [n.get("protagonista"), n.get("lugar")]):
+                print(f"     {clave}: foto de respaldo desde Wikidata")
     n1 = notas[0] if notas else {}
     # LA POLAROID NO ES LA FOTO DE LA VINETA 01: la guia prohibe repetir una
     # imagen en la edicion, y la primera prueba (09/10/2026) puso la misma foto
     # en la portada y en la vineta. La polaroid dice «que o quien»: el
     # protagonista. El fondo dice «donde»: el lugar. Y «¿Que podria pasar?» lleva
-    # un segundo actor de la misma noticia.
-    for clave, campo in (("polaroid", "protagonista"), ("fondo", "lugar"), ("perspectiva", "secundario")):
-        url, cred = foto_wikidata(n1.get(campo))
-        tomar(clave, url, cred)
+    # un segundo actor de la misma noticia. Cada uno con su respaldo, siempre
+    # dentro de la noticia 01: si el protagonista no tiene foto, la polaroid
+    # prueba con el otro actor, y al revés.
+    de_wikidata("polaroid", [n1.get("protagonista"), n1.get("secundario")])
+    de_wikidata("fondo", [n1.get("lugar")])
+    de_wikidata("perspectiva", [n1.get("secundario"), n1.get("protagonista"), n1.get("lugar")])
     lat_url = latam.get("imagen")
     tomar("latam", lat_url, latam.get("credito") or credito_de_url(latam.get("url"), latam.get("medio")))
     if "latam" not in fotos and latam.get("pais"):
@@ -669,7 +711,9 @@ def fecha_de_salida(ed):
         l = date.fromisoformat(s["hasta"][:10]) + timedelta(days=1)
     else:
         return ""
-    return "Lunes %d de %s de %d" % (l.day, MESES[l.month - 1], l.year)
+    # Sin el año desde el 09/11/2026: «Lunes 9 de noviembre de 2026» ya no cabía
+    # en una línea y el «2026» quedaba solo debajo. Con «septiembre», peor.
+    return "Lunes %d de %s" % (l.day, MESES[l.month - 1])
 
 
 def flecha(v, dec=2):

@@ -149,7 +149,7 @@ cambia.** Para ver qué cambió: leer el diseño por la API, exportar a
 | Regla de la guía | Dónde |
 |---|---|
 | Sale el lunes y cubre la semana anterior, de lunes a domingo | `semanaEntorno()` (Worker) y `semana_cubierta()` (render). **De lunes a viernes toca la edición de ESTE lunes; sábado y domingo, la del que viene** (se prepara el fin de semana) |
-| Portada: «Edición N.º 3 · Lunes 12 de octubre de 2026», **sin la semana** (Saúl, 09/10/2026) | `fecha_de_salida()` en render |
+| Portada: «Edición N.º 3 · Lunes 12 de octubre», **sin la semana** (Saúl, 09/10/2026) y sin el año (con «noviembre» ya no cabía en una línea) | `fecha_de_salida()` en render |
 | Edición N.º correlativa | `numero_de_edicion()`: números del boletín **enviados** antes de ese lunes, más uno (decisión de Saúl). Sin panel, ancla N.º 3 = 12/10/2026 |
 | Una sola fecha de corte: el cierre del viernes | `gatherEntornoData(env, corte)`: mercados, tasas e IBC a esa fecha |
 | ▲ y ▼ en cifras de mercado; fechas escritas | `flecha()`, `fecha_sin_anio()` en render |
@@ -234,11 +234,22 @@ crédito y **sin repetir ninguna en la edición**. `render.repartir_fotos()`:
 
 | Hueco | De dónde sale |
 |---|---|
-| Viñetas 01 a 04 | `og:image` del artículo fuente (el Worker, y si no, render.py resolviendo antes el enlace de Google News con `resolver_google_news`) |
-| Polaroid de portada («qué o quién») | Wikidata: imagen del `PROTAGONISTA` de la noticia 01 |
+| Viñetas 01 a 04 | `og:image` del artículo fuente (el Worker, y si no, render.py resolviendo antes el enlace de Google News con `resolver_google_news`); **respaldo:** Wikidata del `PROTAGONISTA` y luego del `LUGAR` de esa misma noticia |
+| Polaroid de portada («qué o quién») | Wikidata: `PROTAGONISTA` de la noticia 01; respaldo, su `SECUNDARIO` |
 | Fondo de portada («dónde») | Wikidata: imagen del `LUGAR` de la noticia 01 |
-| «¿Qué podría pasar?» | Wikidata: imagen del `SECUNDARIO` de la noticia 01 |
+| «¿Qué podría pasar?» | Wikidata: `SECUNDARIO` de la noticia 01; respaldo, protagonista y lugar |
 | Latam enlatada | `og:image` del primer punto; si no, Wikidata del país |
+
+**Tres respaldos desde el 09/11/2026**, cuando la edición salió con 3 huecos de 8:
+
+- **Si la descarga falla, se pide al Worker** (`/foto`, con la misma clave que la
+  edición): TalCual daba 403 a las IP de GitHub Actions y no a las de Cloudflare.
+  Solo imágenes, solo http(s), tope de 8 MB: no es un proxy abierto.
+- **`foto_wikidata` usa el sello (P158) o el logo (P154)** si la entidad no tiene
+  imagen (P18): el protagonista fue la OFAC, sin foto, y la polaroid salió en
+  blanco.
+- **El modelo nombra `LUGAR` y `PROTAGONISTA` en las CUATRO noticias**, no solo en
+  la primera, para que cada viñeta tenga su respaldo de su propia noticia.
 
 **La polaroid NO es la foto de la viñeta 01**: la primera prueba (09/10/2026) las
 repitió. El modelo solo nombra la entidad; la imagen y su licencia salen de

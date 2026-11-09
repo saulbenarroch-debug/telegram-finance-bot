@@ -287,6 +287,28 @@ export default {
         headers: { "Content-Type": nombre.endsWith(".png") ? "image/png" : "application/octet-stream" },
       });
     }
+    // LA FOTO DE UNA VIÑETA, BAJADA DESDE CLOUDFLARE. Hay medios que cierran la
+    // puerta a las IP de GitHub Actions y no a las de Cloudflare: el 09/11/2026
+    // la foto de TalCual daba 403 en Actions (desde casa bajaba bien) y la
+    // viñeta salió sin imagen. render.py prueba aquí cuando su descarga falla.
+    // Con la misma clave que la edición, solo http(s), solo imágenes y con tope
+    // de tamaño: no es un proxy abierto.
+    if (url.pathname === "/foto" && url.searchParams.get("key") === env.WEBHOOK_SECRET) {
+      const destino = String(url.searchParams.get("url") || "");
+      if (!/^https?:\/\//i.test(destino)) return new Response("url no válida", { status: 400 });
+      try {
+        const r = await fetch(destino, { headers: { ...BROWSER_UA,
+          "Accept": "image/avif,image/webp,image/*,*/*;q=0.8",
+          "Referer": new URL(destino).origin + "/" } });
+        const tipo = r.headers.get("Content-Type") || "";
+        if (!r.ok || !/^image\//i.test(tipo)) return new Response("sin imagen", { status: 502 });
+        const datos = await r.arrayBuffer();
+        if (datos.byteLength > 8 * 1024 * 1024) return new Response("demasiado grande", { status: 413 });
+        return new Response(datos, { headers: { "Content-Type": tipo } });
+      } catch {
+        return new Response("no respondió", { status: 504 });
+      }
+    }
     // Endpoint protegido para revisar el newsletter sin pasar por Telegram.
     // /entorno?key=...&force=1 rearma la edición; &datos=1 muestra solo las cifras.
     if (url.pathname === "/entorno" && url.searchParams.get("key") === env.WEBHOOK_SECRET) {
@@ -2004,10 +2026,12 @@ function promptEntorno(d, noticias, sem, agenda) {
     "TIENE que aparecer explicado en el cuerpo (si el subtítulo nombra una licencia, el cuerpo " +
     "explica esa licencia).\n" +
     "FUENTE: solo el número del titular de la lista en que se basa.\n" +
-    "LUGAR: solo en la NOTICIA1: la ciudad o el lugar donde pasa el hecho, tal como se " +
-    "llama en Wikipedia (ejemplo: Caracas). De ahí sale la foto de fondo de la portada.\n" +
-    "PROTAGONISTA: solo en la NOTICIA1: la persona, institución u objeto protagonista, tal " +
-    "como se llama en Wikipedia (ejemplo: Fondo Monetario Internacional). Es la foto de la polaroid.\n" +
+    "LUGAR: en TODAS las noticias: la ciudad o el lugar donde pasa el hecho, tal como se " +
+    "llama en Wikipedia (ejemplo: Caracas). En la NOTICIA1 es la foto de fondo de la portada; " +
+    "en las demás, la foto de respaldo si el artículo no trae imagen.\n" +
+    "PROTAGONISTA: en TODAS las noticias: la persona, institución, empresa u objeto " +
+    "protagonista, tal como se llama en Wikipedia (ejemplo: Fondo Monetario Internacional). En " +
+    "la NOTICIA1 es la foto de la polaroid; en las demás, la foto de respaldo de su viñeta.\n" +
     "SECUNDARIO: solo en la NOTICIA1: otro actor, institución u objeto de la misma noticia, " +
     "distinto del protagonista, tal como se llama en Wikipedia. Es la foto de «¿Qué podría pasar?».\n" +
     "CUERPO:\n" +
